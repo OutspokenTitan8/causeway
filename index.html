@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0f1419" />
+  <title>Job Map</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+  <style>
+    :root { --bg:#0f1419; --panel:#1a2230; --line:#2a3547; --txt:#e6edf3; --mut:#8b98a9; --accent:#3d8bfd; --ok:#2ea043; --warn:#d29922; --err:#f0546c; }
+    * { box-sizing:border-box; }
+    html, body { margin:0; height:100%; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--txt); }
+    body { min-height:100vh; display:flex; }
+    #app { flex:1; display:flex; flex-direction:column; }
+    header { padding:12px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+    header h1 { margin:0; font-size:18px; font-weight:700; }
+    .header-controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
+    .pill { padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.05); font-size:12px; color:var(--mut); }
+    .button, .file-button { border-radius:12px; border:1px solid var(--line); padding:10px 14px; background:var(--bg); color:var(--txt); font-size:13px; font-weight:700; cursor:pointer; }
+    .file-button { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .map-container { position:relative; flex:1; min-height:300px; }
+    #map { width:100%; height:100%; }
+    .legend { position:absolute; right:14px; bottom:14px; z-index:500; background:rgba(15,20,25,.92); border:1px solid var(--line); border-radius:12px; padding:10px; display:grid; gap:6px; font-size:12px; }
+    .legend span { display:flex; align-items:center; gap:8px; color:var(--txt); }
+    .legend i { width:10px; height:10px; border-radius:50%; display:inline-block; }
+    .legend i.completed { width:12px; height:12px; border-radius:4px; background:#8b98a9; position:relative; }
+    .legend i.completed::before,
+    .legend i.completed::after { content:''; position:absolute; left:50%; top:50%; width:8px; height:2px; background:#111; transform-origin:center; }
+    .legend i.completed::before { transform: translate(-50%,-50%) rotate(45deg); }
+    .legend i.completed::after { transform: translate(-50%,-50%) rotate(-45deg); }
+    .sheet { display:grid; grid-template-columns:1fr; gap:10px; padding:12px; }
+    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .controls input, .controls select { min-width:160px; flex:1; background:var(--panel); border:1px solid var(--line); border-radius:12px; color:var(--txt); padding:11px 14px; font-size:14px; }
+    .controls input::placeholder { color:var(--mut); }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+    .stat-card { background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:14px; padding:14px; }
+    .stat-label { color:var(--mut); font-size:12px; margin-bottom:6px; }
+    .stat-value { font-size:20px; font-weight:700; }
+    .list { overflow-y:auto; max-height:34vh; padding:8px; display:grid; gap:10px; }
+    .empty { padding:24px; text-align:center; color:var(--mut); border:1px dashed var(--line); border-radius:14px; }
+    .job-row { display:grid; grid-template-columns:34px 1fr auto; gap:10px; align-items:start; padding:14px; border-radius:14px; border:1px solid rgba(255,255,255,.05); background:rgba(255,255,255,.02); transition:background .22s, opacity .22s, border-color .22s, box-shadow .22s; }
+    .job-row.completed { opacity:.64; background:rgba(46,160,67,.08); }
+    .job-row.completed .job-ref { text-decoration:line-through; color:var(--mut); }
+    .job-row.selected { border-color: rgba(61,139,253,.65); box-shadow: 0 0 0 2px rgba(61,139,253,.25); }
+    .job-pin { width:34px; height:34px; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; }
+    .job-marker { width:16px; height:16px; border-radius:50%; box-shadow:0 0 0 1px rgba(0,0,0,.2); position:relative; }
+    .job-marker.completed { background:#8b98a9; box-shadow:0 0 0 2px rgba(255,255,255,.95); }
+    .job-marker.completed::before,
+    .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:70%; height:2px; background:#111; transform-origin:center; }
+    .job-marker.completed::before { transform: translate(-50%,-50%) rotate(45deg); }
+    .job-marker.completed::after { transform: translate(-50%,-50%) rotate(-45deg); }
+    .marker-cluster { width:40px; height:40px; display:grid; place-items:center; border-radius:50%; color:#fff; font-weight:700; font-size:14px; text-align:center; box-shadow:0 0 0 2px rgba(255,255,255,.18); }
+    .marker-cluster span { line-height:1; }
+    .job-body { min-width:0; }
+    .job-ref { font-size:14px; font-weight:700; word-break:break-word; }
+    .job-addr { font-size:12px; color:var(--mut); margin-top:6px; word-break:break-word; }
+    .job-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+    .chip { font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+    .job-action { border:none; border-radius:12px; padding:10px 14px; background:var(--ok); color:#fff; font-weight:700; cursor:pointer; }
+    .job-action[disabled] { background:var(--line); color:var(--mut); cursor:not-allowed; }
+    .toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:12px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; }
+    .highlight { animation:highlight 2.2s ease forwards; }
+    @keyframes highlight { 0% { box-shadow:0 0 0 0 rgba(61,139,253,.6); } 20% { box-shadow:0 0 0 14px rgba(61,139,253,.24); } 60% { box-shadow:0 0 0 8px rgba(61,139,253,.12); } 100% { box-shadow:0 0 0 0 rgba(61,139,253,0); } }
+    @media(max-width:860px) { .controls{flex-direction:column;align-items:stretch;} .job-row{grid-template-columns:1fr;}.job-action{width:100%;} }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Job Map</h1>
+      <div class="header-controls">
+        <label class="file-button">Load file<input id="fileInput" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+        <span class="pill" id="statusPill">Ready</span>
+        <button class="button" id="installButton" hidden>Install</button>
+      </div>
+    </header>
+    <div class="map-container"><div id="map"></div><div class="legend"><span><i style="background:#f0546c"></i>Overdue</span><span><i style="background:#d29922"></i>Due today</span><span><i style="background:#2ea043"></i>Future</span><span><i class="completed"></i>Completed</span></div></div>
+    <div class="sheet">
+      <div class="controls">
+        <input id="searchInput" type="search" placeholder="Search ref, address, town, gang, operative, desc" />
+        <select id="gangFilter"><option value="__all">All gangs</option></select>
+        <select id="dateFilter"><option value="__all">All planned dates</option></select>
+        <select id="completionFilter"><option value="__all">All jobs</option><option value="active">Active only</option><option value="completed">Completed only</option></select>
+        <select id="sortFilter"><option value="spreadsheet">Spreadsheet order</option><option value="duedate">Due date</option><option value="planned">Planned start</option><option value="ref">Job reference</option><option value="addr">Address</option><option value="distance">Distance</option></select>
+        <button class="button" id="locateButton">Locate</button>
+      </div>
+      <div class="stats" id="statsPanel"></div>
+      <div class="list" id="jobList"><div class="empty">Load a file to start.</div></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    // CONFIGURATION
+    const STORAGE_KEY = 'job-map-single-file-v1';
+    const URG = { over:'#f0546c', today:'#d29922', future:'#2ea043', none:'#8b98a9' };
+
+    // STATE
+    let map, markerCluster, jobs = [], filteredJobs = [], completedSet = new Set(), userLocation = null, deferredPrompt = null;
+    let selectedJobId = null;
+    const state = { search:'', gang:'__all', date:'__all', completionFilter:'__all', sort:'spreadsheet', center:null, zoom:null };
+
+    // UTILITIES
+    function colIndex(letter) { return letter.toUpperCase().split('').reduce((a,c) => a*26 + (c.charCodeAt(0)-64), 0) - 1; }
+    function toDate(value) { if (value instanceof Date) return value; if (typeof value === 'number') return new Date(Math.round((value - 25569) * 86400 * 1000)); if (typeof value === 'string') { const d = new Date(value); return isNaN(d) ? null : d; } return null; }
+    function ymd(date) { if (!date) return ''; return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
+    function nice(date) { return date ? date.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}) : ''; }
+    function normalizeText(value) { return String(value || '').trim().toLowerCase(); }
+    function cleanDesc(value) { return String(value || '').trim().replace(/\s*\n\s*/g,' \n ').replace(/\s{2,}/g,' ').trim(); }
+    function atNumber(address) { const match = String(address || '').match(/\b(\d+[A-Za-z]?\b)/); return match ? match[1] : ''; }
+    function urgencyColor(date) { if (!date) return URG.none; const today = new Date(); today.setHours(0,0,0,0); const day = new Date(date); day.setHours(0,0,0,0); const diff = Math.round((day - today)/86400000); return diff < 0 ? URG.over : diff === 0 ? URG.today : URG.future; }
+    function urgencyLabel(date) { if (!date) return 'No completion date'; const today = new Date(); today.setHours(0,0,0,0); const day = new Date(date); day.setHours(0,0,0,0); const diff = Math.round((day - today)/86400000); return diff < 0 ? `${Math.abs(diff)}d overdue` : diff === 0 ? 'Due today' : `Due in ${diff}d`; }
+    function jobPriority(job) {
+      if (!job.complete) return 2;
+      const today = new Date(); today.setHours(0,0,0,0);
+      const due = new Date(job.complete); due.setHours(0,0,0,0);
+      const diff = Math.round((due - today)/86400000);
+      if (diff < 0) return 0;
+      if (diff === 0) return 1;
+      return 2;
+    }
+    function toast(message) { const el = document.getElementById('toast'); el.textContent = message; el.style.display = 'block'; clearTimeout(window._toastTimer); window._toastTimer = setTimeout(() => el.style.display = 'none', 2600); }
+
+    // STORAGE
+    function saveState() {
+      const payload = {
+        jobs: jobs.map(j => ({
+          id: j.id,
+          ref: j.ref,
+          operative: j.operative,
+          category: j.category,
+          town: j.town,
+          street: j.street,
+          fullAddr: j.fullAddr,
+          status: j.status,
+          jobType: j.jobType,
+          desc: j.desc,
+          note: j.note,
+          tm: j.tm,
+          gang: j.gang,
+          lat: j.lat,
+          lng: j.lng,
+          start: j.start ? j.start.toISOString() : null,
+          complete: j.complete ? j.complete.toISOString() : null,
+          startYmd: j.startYmd,
+          addr: j.addr,
+          atNo: j.atNo
+        })),
+        completed: Array.from(completedSet),
+        state
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    }
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return false;
+        const saved = JSON.parse(raw);
+        jobs = saved.jobs.map(j => ({ ...j, start: j.start ? new Date(j.start) : null, complete: j.complete ? new Date(j.complete) : null, startYmd: j.startYmd || ymd(j.start ? new Date(j.start) : null) }));
+        completedSet = new Set(saved.completed || []);
+        Object.assign(state, saved.state || {});
+        return jobs.length > 0;
+      } catch (err) {
+        console.warn('Restore failed', err);
+        return false;
+      }
+    }
+
+    // IMPORT
+    const HEADER_SYNONYMS = {
+      ref:['ref','reference','job ref','job reference','job number','job no','reference no','job'],
+      operative:['operative','technician','crew','operative name','employee','engineer','field operative'],
+      category:['category','work category','type','work type','category/type'],
+      town:['town','city','suburb','area','location','postcode','post town'],
+      street:['street','address','street address','street line 1','addr','address line 1','road'],
+      fullAddr:['full address','fulladdr','combined address','address full','address 1','full address line'],
+      status:['status','job status','task status','state'],
+      task:['task','gang','crew','team','group','work gang'],
+      desc:['description','desc','notes','note','job description','detail','job details'],
+      requiredCompletion:['required completion','completion date','due','due date','complete by','required by','due by'],
+      plannedStart:['planned start','planned start date','planned date','start date','start','planned'],
+      lat:['lat','latitude','latitude (deg)','gps lat','coord lat','northing'],
+      lng:['lng','lon','long','longitude','longitude (deg)','gps lng','coord lng','easting'],
+      note:['note','notes','additional notes','comments'],
+      jobType:['job type','type','task type','service type'],
+      tm:['tm','team manager','manager','supervisor']
+    };
+    const COL_LETTERS = {
+      ref:'B', operative:'C', operativeName:'C', status:'L', task:'M', gang:'M',
+      desc:'N', requiredCompletion:'O', plannedStart:'R', lat:'AC', lng:'AD',
+      fullAddr:'AL', note:'AK', jobType:'W', tm:'AR', town:'J', street:'K'
+    };
+    const COL = Object.fromEntries(Object.entries(COL_LETTERS).map(([k,v]) => [k, colIndex(v)]));
+    function normalizeHeader(value) {
+      return String(value || '').trim().toLowerCase().replace(/\s+/g,' ').replace(/[:#]/g,'').replace(/[^a-z0-9 ]/g,'');
+    }
+    function findHeaderField(label) {
+      const normalized = normalizeHeader(label);
+      for (const [field, synonyms] of Object.entries(HEADER_SYNONYMS)) {
+        if (synonyms.includes(normalized)) return field;
+      }
+      return null;
+    }
+    function buildHeaderMap(headerRow) {
+      if (!Array.isArray(headerRow)) return {};
+      return headerRow.reduce((map, value, index) => {
+        const field = findHeaderField(value);
+        if (field) map[field] = index;
+        return map;
+      }, {});
+    }
+    function getCell(row, field, headerMap) {
+      if (!Array.isArray(row)) return undefined;
+      if (headerMap[field] != null) return row[headerMap[field]];
+      const fallback = COL[field];
+      return fallback != null ? row[fallback] : undefined;
+    }
+    function parseRows(rows) {
+      const headerMap = buildHeaderMap(rows[0]);
+      // If the export has no header row, fall back to the fixed column layout.
+      const hasHeader = Object.keys(headerMap).length >= 3 && rows.length > 1;
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+      return dataRows.map((row, index) => {
+        const lat = parseFloat(getCell(row, 'lat', headerMap));
+        const lng = parseFloat(getCell(row, 'lng', headerMap));
+        const start = toDate(getCell(row, 'plannedStart', headerMap));
+        const complete = toDate(getCell(row, 'requiredCompletion', headerMap));
+        const street = getCell(row, 'street', headerMap) || '';
+        const town = getCell(row, 'town', headerMap) || '';
+        const fullAddr = getCell(row, 'fullAddr', headerMap) || '';
+        const descValue = getCell(row, 'desc', headerMap) || getCell(row, 'note', headerMap) || '';
+        return {
+          id: `job-${index}-${String(getCell(row, 'ref', headerMap)||'')}`,
+          ref: String(getCell(row, 'ref', headerMap) || ''),
+          operative: String(getCell(row, 'operative', headerMap) || ''),
+          category: String(getCell(row, 'category', headerMap) || ''),
+          town: String(town),
+          street: String(street),
+          fullAddr: String(fullAddr),
+          status: String(getCell(row, 'status', headerMap) || ''),
+          jobType: String(getCell(row, 'jobType', headerMap) || ''),
+          desc: cleanDesc(descValue),
+          note: String(getCell(row, 'note', headerMap) || ''),
+          tm: String(getCell(row, 'tm', headerMap) || ''),
+          gang: String(getCell(row, 'task', headerMap) || ''),
+          lat: Number.isFinite(lat) ? lat : null,
+          lng: Number.isFinite(lng) ? lng : null,
+          start,
+          complete,
+          startYmd: ymd(start),
+          addr: [street, town, fullAddr].filter(Boolean).join(', '),
+          atNo: atNumber(fullAddr),
+          marker: null,
+          visible: true
+        };
+      }).filter(j => j.ref || j.lat != null || j.lng != null);
+    }
+    function loadFile(file) {
+      return file.arrayBuffer().then(buffer => {
+        const data = new Uint8Array(buffer);
+        let workbook;
+        try {
+          workbook = XLSX.read(data, { type:'array', cellDates:true });
+        } catch (err) {
+          try {
+            workbook = XLSX.read(buffer, { type:'array', cellDates:true });
+          } catch (inner) {
+            console.error('XLSX parse failed', err, inner);
+            throw new Error('Unable to read spreadsheet file. Make sure it is a valid .xlsx export.');
+          }
+        }
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:true });
+        if (!rows.length) throw new Error('Sheet is empty');
+        const parsed = parseRows(rows);
+        if (!parsed.length) throw new Error('No valid job rows found. Confirm the sheet layout matches the expected export.');
+        return parsed;
+      });
+    }
+
+    // FILTERING
+    function filterJobs() {
+      const query = normalizeText(state.search);
+      filteredJobs = jobs.filter(job => {
+        const isCompleted = completedSet.has(job.id);
+        if (state.completionFilter === 'active' && isCompleted) return false;
+        if (state.completionFilter === 'completed' && !isCompleted) return false;
+        if (state.gang !== '__all' && job.gang !== state.gang) return false;
+        if (state.date !== '__all' && job.startYmd !== state.date) return false;
+        if (query) {
+          const haystack = [job.ref, job.addr, job.town, job.desc, job.note, job.gang, job.operative].join(' ').toLowerCase();
+          if (!haystack.includes(query)) return false;
+        }
+        return true;
+      });
+      const sorters = {
+        spreadsheet: (a,b) => 0,
+        duedate: (a,b) => ((a.complete?new Date(a.complete).getTime():9e15)-(b.complete?new Date(b.complete).getTime():9e15)) || compareText(a.ref,b.ref),
+        planned: (a,b) => ((a.start?new Date(a.start).getTime():9e15)-(b.start?new Date(b.start).getTime():9e15)) || compareText(a.ref,b.ref),
+        ref: (a,b) => compareText(a.ref,b.ref),
+        addr: (a,b) => compareText(a.addr,b.addr),
+        distance: (a,b) => {
+          if (!userLocation) return compareText(a.ref,b.ref);
+          return distance(a) - distance(b) || compareText(a.ref,b.ref);
+        }
+      };
+      filteredJobs.sort(sorters[state.sort] || sorters.spreadsheet);
+    }
+    function compareText(a,b) { return String(a||'').localeCompare(String(b||''), undefined, { sensitivity:'base' }); }
+    function distance(job) { if (!userLocation || job.lat==null || job.lng==null) return Number.MAX_SAFE_INTEGER; const x = job.lat - userLocation.lat; const y = job.lng - userLocation.lng; return Math.sqrt(x*x+y*y); }
+
+    // MARKER MANAGER
+    function initMap() {
+      map = L.map('map',{zoomControl:true,tap:false}).setView([52.057,-2.7],13);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,subdomains:'abcd',crossOrigin:true,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+      markerCluster = L.markerClusterGroup({
+        chunkedLoading:true,
+        showCoverageOnHover:false,
+        spiderfyOnMaxZoom:true,
+        iconCreateFunction: cluster => {
+          let clusterPriority = 2;
+          let totalCount = 0;
+          cluster.getAllChildMarkers().forEach(marker => {
+            totalCount += 1;
+            if (!marker.options.completed) {
+              if (marker.options.priority === 0) clusterPriority = 0;
+              else if (marker.options.priority === 1 && clusterPriority > 1) clusterPriority = 1;
+            }
+          });
+          const color = totalCount === 0 ? '#8b98a9' : clusterPriority === 0 ? '#f0546c' : clusterPriority === 1 ? '#d29922' : '#2ea043';
+          return L.divIcon({ html:`<div class="marker-cluster" style="background:${color}"><span>${totalCount}</span></div>`, className:'', iconSize:[40,40], iconAnchor:[20,20] });
+        }
+      });
+      map.addLayer(markerCluster);
+      if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+    }
+    function buildMarkers() {
+      jobs.forEach((job,index) => {
+        if (job.marker) return;
+        if (job.lat == null || job.lng == null) return;
+        const completed = completedSet.has(job.id);
+        const className = completed ? 'job-marker completed' : 'job-marker';
+        const color = completed ? '#8b98a9' : urgencyColor(job.complete);
+        const priority = jobPriority(job);
+        const icon = L.divIcon({ html:`<div class="${className}" style="background:${color}"></div>`, className:'', iconSize:[16,16], iconAnchor:[8,8] });
+        const marker = L.marker([job.lat, job.lng], { icon, priority, completed });
+        marker.bindPopup(buildPopup(job, index+1), { maxWidth:320 });
+        marker.on('click', () => scrollToRow(job.id));
+        job.marker = marker;
+      });
+    }
+    function refreshMarkers() {
+      markerCluster.clearLayers();
+      filteredJobs.forEach(job => { if (job.marker) markerCluster.addLayer(job.marker); });
+    }
+    function updateMarker(job, index) {
+      if (!job.marker) return;
+      const completed = completedSet.has(job.id);
+      const className = completed ? 'job-marker completed' : 'job-marker';
+      const color = completed ? '#8b98a9' : urgencyColor(job.complete);
+      const priority = jobPriority(job);
+      const icon = L.divIcon({ html:`<div class="${className}" style="background:${color}"></div>`, className:'', iconSize:[16,16], iconAnchor:[8,8] });
+      job.marker.setIcon(icon);
+      job.marker.options.priority = priority;
+      job.marker.options.completed = completed;
+      job.marker.bindPopup(buildPopup(job, index+1));
+    }
+
+    // POPUPS
+    function buildPopup(job, number) {
+      const rows = [];
+      if (job.addr) rows.push(`<div class="pp-addr">${job.addr}${job.atNo?` — ${job.atNo}`:''}</div>`);
+      const tags = [job.jobType, job.category].filter(Boolean).join(' · ');
+      if (tags) rows.push(`<div class="pp-tags">${tags}</div>`);
+      if (job.desc) rows.push(`<div class="pp-desc">${job.desc}</div>`);
+      const meta = [];
+      if (job.start) meta.push(`Planned start: ${nice(job.start)}`);
+      if (job.complete) meta.push(`Complete by: ${nice(job.complete)} (${urgencyLabel(job.complete)})`);
+      if (job.tm) meta.push(`TM: ${job.tm}`);
+      if (job.status) meta.push(`Status: ${job.status}`);
+      if (job.note) meta.push(job.note);
+      rows.push(`<div class="pp-meta">${meta.join('<br>')}</div>`);
+      rows.push(`<div class="pp-coords">${job.lat!=null?`${job.lat.toFixed(6)}, ${job.lng.toFixed(6)}`:'No coordinates'}</div>`);
+      return `<div class="pp"><div class="pp-head" style="border-color:${urgencyColor(job.complete)}"><span class="pp-n" style="background:${urgencyColor(job.complete)}">${number}</span> ${job.ref}</div>${rows.join('')}<div class="pp-btns"><button class="pp-copy" onclick="copyCoords(${job.lat},${job.lng})">Copy coords</button><button class="pp-nav" onclick="navigateTo(${job.lat},${job.lng})">Navigate</button></div></div>`;
+    }
+    function copyCoords(lat, lng) {
+      const txt = `${lat}, ${lng}`;
+      if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast('Copied ' + txt), () => prompt('Copy coordinates', txt));
+      else prompt('Copy coordinates', txt);
+    }
+    function navigateTo(lat, lng) {
+      if (lat == null || lng == null) return;
+      window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+    }
+    window.copyCoords = copyCoords;
+    window.navigateTo = navigateTo;
+
+    // GPS
+    function locateUser() {
+      if (!navigator.geolocation) { toast('GPS unavailable'); return; }
+      navigator.geolocation.getCurrentPosition(position => {
+        userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+        L.circleMarker([userLocation.lat, userLocation.lng], { radius:8, color:'#fff', fillColor:'#3d8bfd', fillOpacity:1, weight:2 }).addTo(map).bindPopup('Your location');
+        map.setView([userLocation.lat, userLocation.lng], 14);
+        renderAll();
+      }, () => toast('Unable to get location'));
+    }
+
+    // PWA
+    function installReady() {
+      document.getElementById('installButton').hidden = !deferredPrompt;
+    }
+    function createManifest() {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#3d8bfd"/><path d="M96 32c-24 0-44 20-44 44 0 34 44 76 44 76s44-42 44-76c0-24-20-44-44-44zm0 56a12 12 0 1 1 0-24 12 12 0 0 1 0 24z" fill="white"/></svg>';
+      const manifest = {
+        name:'Job Map',
+        short_name:'JobMap',
+        start_url:'./job-map.html',
+        display:'standalone',
+        background_color:'#0f1419',
+        theme_color:'#0f1419',
+        icons:[{ src:`data:image/svg+xml,${encodeURIComponent(svg)}`, sizes:'192x192', type:'image/svg+xml' }]
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type:'application/manifest+json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('link');
+      link.rel = 'manifest';
+      link.href = url;
+      document.head.appendChild(link);
+    }
+    function registerServiceWorker() {
+      if ('serviceWorker' in navigator) {
+        const workerCode = `self.addEventListener('install', event => { const cacheName = 'job-map-sw-v1'; event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(['./','./job-map.html']))).then(() => self.skipWaiting()); }); self.addEventListener('activate', event => { event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== 'job-map-sw-v1').map(key => caches.delete(key))))).then(() => self.clients.claim()); }); self.addEventListener('fetch', event => { if (event.request.method !== 'GET') return; event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(response => { const copy = response.clone(); caches.open('job-map-sw-v1').then(cache => cache.put(event.request, copy)); return response; }).catch(() => caches.match('./job-map.html')))); });`;
+        const blob = new Blob([workerCode], { type:'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        navigator.serviceWorker.register(url).catch(()=>{});
+      }
+    }
+
+    // RENDERING
+    function updateFilters() {
+      const gangSelect = document.getElementById('gangFilter');
+      const dateSelect = document.getElementById('dateFilter');
+      const gangValues = [...new Set(jobs.map(j => j.gang).filter(Boolean))].sort();
+      const dateValues = [...new Set(jobs.map(j => j.startYmd).filter(Boolean))].sort();
+      const preserveGang = gangSelect.value;
+      const preserveDate = dateSelect.value;
+      gangSelect.innerHTML = '<option value="__all">All gangs</option>';
+      gangValues.forEach(g => gangSelect.insertAdjacentHTML('beforeend', `<option value="${g}">${g}</option>`));
+      dateSelect.innerHTML = '<option value="__all">All planned dates</option>';
+      dateValues.forEach(d => dateSelect.insertAdjacentHTML('beforeend', `<option value="${d}">${d}</option>`));
+      if (gangValues.includes(preserveGang)) gangSelect.value = preserveGang;
+      if (dateValues.includes(preserveDate)) dateSelect.value = preserveDate;
+    }
+    function renderList() {
+      const container = document.getElementById('jobList');
+      container.innerHTML = '';
+      if (!filteredJobs.length) {
+        container.innerHTML = '<div class="empty">No jobs match the current filters.</div>';
+        return;
+      }
+      filteredJobs.forEach((job, index) => {
+        const missing = job.lat == null || job.lng == null;
+        const color = urgencyColor(job.complete);
+        const done = completedSet.has(job.id);
+        const item = document.createElement('div');
+        item.className = 'job-row' + (done ? ' completed' : '') + (selectedJobId === job.id ? ' selected' : '');
+        item.dataset.id = job.id;
+        item.innerHTML = `<div class="job-pin" style="background:${missing?'var(--line)':color}">${missing?'!':index+1}</div><div class="job-body"><div class="job-ref">${job.ref || 'No reference'}${done?` <span class="chip" style="border-color:var(--ok);color:var(--ok)">Completed</span>`:''}</div><div class="job-addr">${job.addr || job.fullAddr || 'No address'}</div><div class="job-meta">${job.jobType?`<span class="chip">${job.jobType}</span>`:''}${job.status?`<span class="chip">${job.status}</span>`:''}${job.complete?`<span class="chip" style="color:${color};border-color:${color}">${urgencyLabel(job.complete)}</span>`:''}</div><div class="job-actions"><button class="job-action nav-button" ${missing?'disabled':''}>Nav</button><button class="job-action complete-button">${done?'Restore job':'Mark complete'}</button></div></div>`;
+        item.querySelector('.job-body').onclick = () => { if (!missing) { selectJob(job.id); if (job.marker) job.marker.openPopup(); map.panTo([job.lat, job.lng]); }};
+        item.querySelector('.nav-button').onclick = event => { event.stopPropagation(); if (!missing) { navigateTo(job.lat, job.lng); }};
+        item.querySelector('.complete-button').onclick = event => { event.stopPropagation(); toggleCompleted(job.id); };
+        container.appendChild(item);
+      });
+    }
+    function selectJob(id) {
+      selectedJobId = id;
+      renderList();
+      const row = document.querySelector(`[data-id="${id}"]`);
+      if (!row) return;
+      row.scrollIntoView({ behavior:'smooth', block:'center' });
+    }
+    function scrollToRow(id) {
+      selectJob(id);
+    }
+    function renderStats() {
+      const total = jobs.length;
+      const mapped = jobs.filter(j => j.lat != null && j.lng != null).length;
+      const overdue = jobs.filter(j => j.complete && new Date(j.complete) < new Date(new Date().setHours(0,0,0,0))).length;
+      const dueToday = jobs.filter(j => j.complete && ymd(new Date(j.complete)) === ymd(new Date())).length;
+      const future = jobs.filter(j => j.complete && new Date(j.complete) > new Date(new Date().setHours(0,0,0,0))).length;
+      const completed = completedSet.size;
+      document.getElementById('statsPanel').innerHTML = `<div class="stat-card"><div class="stat-label">Total jobs</div><div class="stat-value">${total}</div></div><div class="stat-card"><div class="stat-label">Mapped jobs</div><div class="stat-value">${mapped}</div></div><div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-value">${overdue}</div></div><div class="stat-card"><div class="stat-label">Due today</div><div class="stat-value">${dueToday}</div></div><div class="stat-card"><div class="stat-label">Future</div><div class="stat-value">${future}</div></div><div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value">${completed}</div></div>`;
+    }
+    function toggleCompleted(jobId) {
+      if (completedSet.has(jobId)) completedSet.delete(jobId);
+      else completedSet.add(jobId);
+      renderAll();
+      toast(completedSet.has(jobId) ? 'Marked complete' : 'Restored job');
+    }
+    function renderAll() {
+      filterJobs();
+      renderStats();
+      renderList();
+      jobs.forEach((job, index) => updateMarker(job, index + 1));
+      refreshMarkers();
+      saveState();
+    }
+
+    // STARTUP
+    function init() {
+      initMap();
+      document.getElementById('fileInput').addEventListener('change', event => {
+        const file = event.target.files[0];
+        if (!file) return;
+        document.getElementById('statusPill').textContent = 'Loading...';
+        loadFile(file).then(parsed => {
+          jobs = parsed;
+          completedSet = new Set();
+          updateFilters();
+          buildMarkers();
+          renderAll();
+          document.getElementById('statusPill').textContent = `Loaded ${jobs.length} jobs`;
+        }).catch(err => {
+          console.error(err);
+          const message = err && err.message ? err.message : 'Invalid spreadsheet or missing data';
+          toast(message);
+          document.getElementById('statusPill').textContent = message;
+        });
+      });
+      document.getElementById('searchInput').addEventListener('input', event => { state.search = event.target.value; renderAll(); });
+      document.getElementById('gangFilter').addEventListener('change', event => { state.gang = event.target.value; renderAll(); });
+      document.getElementById('dateFilter').addEventListener('change', event => { state.date = event.target.value; renderAll(); });
+      document.getElementById('completionFilter').addEventListener('change', event => { state.completionFilter = event.target.value; renderAll(); });
+      document.getElementById('sortFilter').addEventListener('change', event => { state.sort = event.target.value; renderAll(); });
+      document.getElementById('locateButton').addEventListener('click', locateUser);
+      document.getElementById('installButton').addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        document.getElementById('installButton').hidden = true;
+        if (choice.outcome === 'accepted') toast('Install accepted');
+      });
+      window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredPrompt = event; document.getElementById('installButton').hidden = false; });
+      window.addEventListener('appinstalled', () => { document.getElementById('installButton').hidden = true; toast('App installed'); });
+
+      createManifest();
+      registerServiceWorker();
+      if (loadState()) {
+        updateFilters();
+        buildMarkers();
+        renderAll();
+        document.getElementById('statusPill').textContent = 'Restored saved jobs';
+      }
+    }
+    init();
+  </script>
+</body>
+</html>
