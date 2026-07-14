@@ -78,7 +78,12 @@
     .job-marker.completed::before, .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:12px; height:2px; background:#fff; transform-origin:center; }
     .job-marker.completed::before { transform:translate(-50%,-50%) rotate(45deg); }
     .job-marker.completed::after { transform:translate(-50%,-50%) rotate(-45deg); }
-    .marker-cluster { width:42px; height:42px; display:grid; place-items:center; border-radius:50%; color:#fff; font-weight:700; font-size:15px; border:2px solid #fff; box-shadow:0 2px 8px rgba(0,0,0,.5); }
+    /* Clusters are deliberately NOT circles: a circle with a number always
+       means "job N", a rounded square always means "N jobs grouped here". */
+    .marker-cluster { width:46px; height:44px; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:10px; color:#fff; border:2px solid #fff; box-shadow:0 2px 8px rgba(0,0,0,.5); position:relative; }
+    .marker-cluster::before { content:''; position:absolute; top:-5px; left:5px; right:5px; height:5px; border-radius:6px 6px 0 0; background:inherit; opacity:.55; border:2px solid #fff; border-bottom:none; box-sizing:border-box; }
+    .marker-cluster b { font-size:16px; font-weight:800; line-height:1; }
+    .marker-cluster i { font-size:8px; font-style:normal; letter-spacing:.5px; opacity:.9; margin-top:1px; text-transform:uppercase; }
 
     /* ---------- Popup ---------- */
     .leaflet-popup-content { margin:12px 14px; }
@@ -96,6 +101,12 @@
     .pp-nav { background:#2ea043; }
 
     .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:11px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; max-width:90%; text-align:center; }
+
+    /* Detail modal - used when the map pane is too short to show a popup */
+    .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:3000; padding:16px; }
+    .modal.open { display:flex; }
+    .modal-card { background:#fff; border-radius:14px; width:100%; max-width:420px; max-height:80vh; overflow-y:auto; padding:16px; position:relative; }
+    .modal-close { position:absolute; top:8px; right:10px; background:none; border:none; font-size:24px; line-height:1; color:#888; cursor:pointer; padding:4px 8px; }
   </style>
 </head>
 <body>
@@ -118,6 +129,7 @@
         <span><i style="background:#f0546c"></i>Overdue</span>
         <span><i style="background:#d29922"></i>Due today</span>
         <span><i style="background:#2ea043"></i>Future</span>
+        <span><i style="background:#8b98a9;border-radius:3px"></i>Square = group</span>
       </div>
     </div>
 
@@ -150,6 +162,13 @@
     </div>
   </div>
   <div class="toast" id="toast"></div>
+
+  <div class="modal" id="detailModal">
+    <div class="modal-card">
+      <button class="modal-close" id="modalClose">&times;</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
@@ -413,8 +432,10 @@
         kids.forEach(function (m) { if (m.options.priority < worst) worst = m.options.priority; });
         var color = worst === 0 ? URG.over : worst === 1 ? URG.today : URG.future;
         return L.divIcon({
-          html: '<div class="marker-cluster" style="background:' + color + '">' + kids.length + '</div>',
-          className: '', iconSize: [42,42], iconAnchor: [21,21]
+          html: '<div class="marker-cluster" style="background:' + color + '">' +
+                  '<b>' + kids.length + '</b><i>jobs</i>' +
+                '</div>',
+          className: '', iconSize: [46,44], iconAnchor: [23,22]
         });
       }
     });
@@ -451,11 +472,41 @@
         job.marker.setIcon(markerIcon(job, done));
         job.marker.options.priority = priorityOf(job);
       }
-      job.marker.bindPopup(popupHtml(job), { maxWidth:300 });
+      job.marker.bindPopup(popupHtml(job), {
+        maxWidth: 300,
+        keepInView: true,                       // never let the popup sit off-screen
+        autoPan: true,
+        autoPanPadding: [16, 16],
+        maxHeight: Math.max(120, mapHeight() - 90)  // scroll inside rather than overflow
+      });
       live.push(job.marker);
     });
     markerCluster.addLayers(live);
   }
+
+  function mapHeight() {
+    var el = document.querySelector('.map-container');
+    return el ? el.clientHeight : 400;
+  }
+
+  // If the map pane is too short, a Leaflet popup can't fit and Leaflet ends up
+  // panning the marker out of view. Below this height, show a modal card instead.
+  var MIN_HEIGHT_FOR_POPUP = 300;
+
+  function openDetails(job) {
+    if (job.lat == null) return;
+    if (mapHeight() >= MIN_HEIGHT_FOR_POPUP && job.marker) {
+      map.setView([job.lat, job.lng], Math.max(map.getZoom(), CLUSTER_OFF_AT_ZOOM));
+      markerCluster.zoomToShowLayer(job.marker, function () { job.marker.openPopup(); });
+    } else {
+      document.getElementById('modalBody').innerHTML = popupHtml(job);
+      document.getElementById('detailModal').classList.add('open');
+    }
+  }
+  function closeDetails() {
+    document.getElementById('detailModal').classList.remove('open');
+  }
+  window.closeDetails = closeDetails;
 
   function fitToFilter() {
     var pts = [];
@@ -673,10 +724,7 @@
     renderList();
     var row = document.querySelector('[data-id="' + id + '"]');
     if (row) row.scrollIntoView({ behavior:'smooth', block:'center' });
-    if (job && job.marker && panTo && job.lat != null) {
-      map.setView([job.lat, job.lng], Math.max(map.getZoom(), CLUSTER_OFF_AT_ZOOM));
-      markerCluster.zoomToShowLayer(job.marker, function () { job.marker.openPopup(); });
-    }
+    if (job && panTo) openDetails(job);
   }
 
   function toggleDone(id) {
@@ -721,8 +769,12 @@
     var sheet = document.getElementById('sheet');
     var dragging = false;
 
+    // Never let the list squeeze the map below MIN_MAP_PX - that was what
+    // pushed job pins off-screen when the popup tried to open.
+    var MIN_MAP_PX = 240;
+
     function setHeight(px) {
-      var max = window.innerHeight * 0.8;
+      var max = window.innerHeight - MIN_MAP_PX;
       var h = Math.max(0, Math.min(max, px));
       document.documentElement.style.setProperty('--sheet-h', h + 'px');
       state.sheetH = h + 'px';
@@ -838,6 +890,11 @@
         map.setView([userLocation.lat, userLocation.lng], 14);
         render();
       }, function () { toast('Unable to get your location'); });
+    });
+
+    document.getElementById('modalClose').addEventListener('click', closeDetails);
+    document.getElementById('detailModal').addEventListener('click', function (e) {
+      if (e.target.id === 'detailModal') closeDetails();   // tap backdrop to close
     });
 
     initResizer();
