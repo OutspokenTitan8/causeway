@@ -9,555 +9,848 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
   <style>
-    :root { --bg:#0f1419; --panel:#1a2230; --line:#2a3547; --txt:#e6edf3; --mut:#8b98a9; --accent:#3d8bfd; --ok:#2ea043; --warn:#d29922; --err:#f0546c; }
-    * { box-sizing:border-box; }
+    :root {
+      --bg:#0f1419; --panel:#1a2230; --line:#2a3547; --txt:#e6edf3; --mut:#8b98a9;
+      --accent:#3d8bfd; --ok:#2ea043; --warn:#d29922; --err:#f0546c;
+      --sheet-h: 42vh;
+    }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
     html, body { margin:0; height:100%; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--txt); }
-    body { min-height:100vh; display:flex; }
-    #app { flex:1; display:flex; flex-direction:column; }
-    header { padding:12px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
-    header h1 { margin:0; font-size:18px; font-weight:700; }
-    .header-controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
+    #app { display:flex; flex-direction:column; height:100vh; height:100dvh; }
+
+    /* ---------- Header ---------- */
+    header { padding:10px 12px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    header h1 { margin:0; font-size:17px; font-weight:700; }
+    .version { font-size:11px; color:var(--mut); font-weight:600; }
+    .header-right { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .pill { padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.05); font-size:12px; color:var(--mut); }
-    .button, .file-button { border-radius:12px; border:1px solid var(--line); padding:10px 14px; background:var(--bg); color:var(--txt); font-size:13px; font-weight:700; cursor:pointer; }
+    .pill.alert { border-color:var(--err); color:#fff; background:rgba(240,84,108,.22); font-weight:700; }
+    .button, .file-button { border-radius:10px; border:1px solid var(--line); padding:9px 13px; background:var(--bg); color:var(--txt); font-size:13px; font-weight:700; cursor:pointer; }
     .file-button { background:var(--accent); border-color:var(--accent); color:#fff; }
-    .map-container { position:relative; flex:1; min-height:300px; }
+
+    /* Stale-data banner */
+    .stale-bar { display:none; padding:9px 12px; background:rgba(240,84,108,.16); border-bottom:1px solid var(--err); color:#ffd9e0; font-size:12px; font-weight:600; }
+    .stale-bar.show { display:block; }
+
+    /* ---------- Map ---------- */
+    .map-container { position:relative; flex:1; min-height:120px; }
     #map { width:100%; height:100%; }
-    .legend { position:absolute; right:14px; bottom:14px; z-index:500; background:rgba(15,20,25,.92); border:1px solid var(--line); border-radius:12px; padding:10px; display:grid; gap:6px; font-size:12px; }
-    .legend span { display:flex; align-items:center; gap:8px; color:var(--txt); }
-    .legend i { width:10px; height:10px; border-radius:50%; display:inline-block; }
-    .legend i.completed { width:12px; height:12px; border-radius:4px; background:#8b98a9; position:relative; }
-    .legend i.completed::before,
-    .legend i.completed::after { content:''; position:absolute; left:50%; top:50%; width:8px; height:2px; background:#111; transform-origin:center; }
-    .legend i.completed::before { transform: translate(-50%,-50%) rotate(45deg); }
-    .legend i.completed::after { transform: translate(-50%,-50%) rotate(-45deg); }
-    .sheet { display:grid; grid-template-columns:1fr; gap:10px; padding:12px; }
-    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .controls input, .controls select { min-width:160px; flex:1; background:var(--panel); border:1px solid var(--line); border-radius:12px; color:var(--txt); padding:11px 14px; font-size:14px; }
+    .legend { position:absolute; right:10px; bottom:10px; z-index:500; background:rgba(15,20,25,.9); border:1px solid var(--line); border-radius:10px; padding:8px 10px; display:grid; gap:5px; font-size:11px; }
+    .legend span { display:flex; align-items:center; gap:7px; }
+    .legend i { width:11px; height:11px; border-radius:50%; display:inline-block; border:1px solid #fff; }
+
+    /* ---------- Drag handle ---------- */
+    .drag-bar { height:20px; background:var(--panel); border-top:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:ns-resize; touch-action:none; flex:none; }
+    .drag-bar::before { content:''; width:44px; height:4px; border-radius:2px; background:var(--line); }
+    .drag-bar:active::before { background:var(--accent); }
+
+    /* ---------- Sheet ---------- */
+    .sheet { background:var(--panel); height:var(--sheet-h); display:flex; flex-direction:column; flex:none; overflow:hidden; }
+    .sheet.collapsed { height:0; }
+    .controls { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); flex:none; }
+    .controls input, .controls select { min-width:120px; flex:1; background:var(--bg); border:1px solid var(--line); border-radius:10px; color:var(--txt); padding:10px 12px; font-size:13px; }
     .controls input::placeholder { color:var(--mut); }
-    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
-    .stat-card { background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:14px; padding:14px; }
-    .stat-label { color:var(--mut); font-size:12px; margin-bottom:6px; }
-    .stat-value { font-size:20px; font-weight:700; }
-    .list { overflow-y:auto; max-height:34vh; padding:8px; display:grid; gap:10px; }
-    .empty { padding:24px; text-align:center; color:var(--mut); border:1px dashed var(--line); border-radius:14px; }
-    .job-row { display:grid; grid-template-columns:34px 1fr auto; gap:10px; align-items:start; padding:14px; border-radius:14px; border:1px solid rgba(255,255,255,.05); background:rgba(255,255,255,.02); transition:background .22s, opacity .22s, border-color .22s, box-shadow .22s; }
-    .job-row.completed { opacity:.64; background:rgba(46,160,67,.08); }
+    .stats { display:flex; gap:8px; padding:8px 12px 0; flex-wrap:wrap; flex:none; }
+    .stat { background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:10px; padding:7px 11px; font-size:12px; color:var(--mut); }
+    .stat b { display:block; font-size:16px; margin-top:2px; color:var(--txt); }
+    .list { overflow-y:auto; padding:10px 12px 16px; display:grid; gap:9px; flex:1; }
+    .empty { padding:22px; text-align:center; color:var(--mut); border:1px dashed var(--line); border-radius:12px; }
+
+    /* ---------- Job rows ---------- */
+    .job-row { display:grid; grid-template-columns:32px 1fr; gap:10px; padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,.05); background:rgba(255,255,255,.02); }
+    .job-row.completed { opacity:.6; background:rgba(46,160,67,.08); }
     .job-row.completed .job-ref { text-decoration:line-through; color:var(--mut); }
-    .job-row.selected { border-color: rgba(61,139,253,.65); box-shadow: 0 0 0 2px rgba(61,139,253,.25); }
-    .job-pin { width:34px; height:34px; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; }
-    .job-marker { width:16px; height:16px; border-radius:50%; box-shadow:0 0 0 1px rgba(0,0,0,.2); position:relative; }
-    .job-marker.completed { background:#8b98a9; box-shadow:0 0 0 2px rgba(255,255,255,.95); }
-    .job-marker.completed::before,
-    .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:70%; height:2px; background:#111; transform-origin:center; }
-    .job-marker.completed::before { transform: translate(-50%,-50%) rotate(45deg); }
-    .job-marker.completed::after { transform: translate(-50%,-50%) rotate(-45deg); }
-    .marker-cluster { width:40px; height:40px; display:grid; place-items:center; border-radius:50%; color:#fff; font-weight:700; font-size:14px; text-align:center; box-shadow:0 0 0 2px rgba(255,255,255,.18); }
-    .marker-cluster span { line-height:1; }
-    .job-body { min-width:0; }
+    .job-row.selected { border-color:rgba(61,139,253,.65); box-shadow:0 0 0 2px rgba(61,139,253,.25); }
+    .job-pin { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; border:2px solid #fff; }
     .job-ref { font-size:14px; font-weight:700; word-break:break-word; }
-    .job-addr { font-size:12px; color:var(--mut); margin-top:6px; word-break:break-word; }
-    .job-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
-    .chip { font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
-    .job-action { border:none; border-radius:12px; padding:10px 14px; background:var(--ok); color:#fff; font-weight:700; cursor:pointer; }
-    .job-action[disabled] { background:var(--line); color:var(--mut); cursor:not-allowed; }
-    .toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:12px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; }
-    .highlight { animation:highlight 2.2s ease forwards; }
-    @keyframes highlight { 0% { box-shadow:0 0 0 0 rgba(61,139,253,.6); } 20% { box-shadow:0 0 0 14px rgba(61,139,253,.24); } 60% { box-shadow:0 0 0 8px rgba(61,139,253,.12); } 100% { box-shadow:0 0 0 0 rgba(61,139,253,0); } }
-    @media(max-width:860px) { .controls{flex-direction:column;align-items:stretch;} .job-row{grid-template-columns:1fr;}.job-action{width:100%;} }
+    .job-addr { font-size:12px; color:var(--mut); margin-top:5px; word-break:break-word; }
+    .job-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .chip { font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+    .job-actions { display:flex; gap:7px; margin-top:10px; }
+    .job-action { flex:1; border:none; border-radius:10px; padding:9px; color:#fff; font-weight:700; font-size:12px; cursor:pointer; }
+    .job-action.nav { background:var(--ok); }
+    .job-action.done { background:var(--accent); }
+    .job-action:disabled { background:var(--line); color:var(--mut); cursor:not-allowed; }
+
+    /* ---------- Markers ---------- */
+    .job-marker { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:13px; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.45); position:relative; }
+    .job-marker.completed { background:#8b98a9; }
+    .job-marker.completed::before, .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:12px; height:2px; background:#fff; transform-origin:center; }
+    .job-marker.completed::before { transform:translate(-50%,-50%) rotate(45deg); }
+    .job-marker.completed::after { transform:translate(-50%,-50%) rotate(-45deg); }
+    .marker-cluster { width:42px; height:42px; display:grid; place-items:center; border-radius:50%; color:#fff; font-weight:700; font-size:15px; border:2px solid #fff; box-shadow:0 2px 8px rgba(0,0,0,.5); }
+
+    /* ---------- Popup ---------- */
+    .leaflet-popup-content { margin:12px 14px; }
+    .pp { min-width:220px; }
+    .pp-head { font-size:14px; font-weight:700; color:#111; padding-bottom:6px; margin-bottom:7px; border-bottom:2px solid; display:flex; align-items:center; gap:8px; }
+    .pp-n { color:#fff; border-radius:50%; width:22px; height:22px; font-size:12px; display:inline-flex; align-items:center; justify-content:center; flex:none; }
+    .pp-addr { font-size:13px; font-weight:600; color:#111; margin-bottom:3px; }
+    .pp-tags { font-size:11px; color:#666; margin-bottom:6px; }
+    .pp-desc { font-size:12px; line-height:1.45; color:#222; background:#f2f5f8; border-radius:6px; padding:7px 9px; margin-bottom:7px; }
+    .pp-meta { font-size:11px; color:#444; line-height:1.65; margin-bottom:7px; }
+    .pp-coords { font-size:11px; color:#555; font-family:ui-monospace,Menlo,monospace; margin-bottom:9px; }
+    .pp-btns { display:flex; gap:6px; }
+    .pp-btns button { flex:1; border:none; border-radius:8px; padding:9px; font-size:12px; font-weight:700; color:#fff; cursor:pointer; }
+    .pp-copy { background:#3d8bfd; }
+    .pp-nav { background:#2ea043; }
+
+    .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:11px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; max-width:90%; text-align:center; }
   </style>
 </head>
 <body>
   <div id="app">
     <header>
       <h1>Job Map</h1>
-      <div class="header-controls">
+      <span class="version" id="version"></span>
+      <div class="header-right">
+        <span class="pill alert" id="overduePill" hidden></span>
+        <span class="pill" id="statusPill">No data loaded</span>
         <label class="file-button">Load file<input id="fileInput" type="file" accept=".xlsx,.xls,.csv" hidden></label>
-        <span class="pill" id="statusPill">Ready</span>
-        <button class="button" id="installButton" hidden>Install</button>
       </div>
     </header>
-    <div class="map-container"><div id="map"></div><div class="legend"><span><i style="background:#f0546c"></i>Overdue</span><span><i style="background:#d29922"></i>Due today</span><span><i style="background:#2ea043"></i>Future</span><span><i class="completed"></i>Completed</span></div></div>
-    <div class="sheet">
+
+    <div class="stale-bar" id="staleBar"></div>
+
+    <div class="map-container">
+      <div id="map"></div>
+      <div class="legend">
+        <span><i style="background:#f0546c"></i>Overdue</span>
+        <span><i style="background:#d29922"></i>Due today</span>
+        <span><i style="background:#2ea043"></i>Future</span>
+      </div>
+    </div>
+
+    <div class="drag-bar" id="dragBar" title="Drag to resize - double-tap to collapse"></div>
+
+    <div class="sheet" id="sheet">
       <div class="controls">
-        <input id="searchInput" type="search" placeholder="Search ref, address, town, gang, operative, desc" />
+        <input id="searchInput" type="search" placeholder="Search ref, street, description" />
         <select id="gangFilter"><option value="__all">All gangs</option></select>
         <select id="dateFilter"><option value="__all">All planned dates</option></select>
-        <select id="completionFilter"><option value="__all">All jobs</option><option value="active">Active only</option><option value="completed">Completed only</option></select>
-        <select id="sortFilter"><option value="spreadsheet">Spreadsheet order</option><option value="duedate">Due date</option><option value="planned">Planned start</option><option value="ref">Job reference</option><option value="addr">Address</option><option value="distance">Distance</option></select>
+        <select id="completionFilter">
+          <option value="active">Active only</option>
+          <option value="__all">All jobs</option>
+          <option value="completed">Completed only</option>
+        </select>
+        <select id="sortFilter">
+          <option value="spreadsheet">Spreadsheet order</option>
+          <option value="duedate">Completion date</option>
+          <option value="planned">Planned start</option>
+          <option value="ref">Job reference</option>
+          <option value="addr">Address</option>
+          <option value="distance">Nearest first</option>
+        </select>
+        <button class="button" id="todayButton">Today</button>
+        <button class="button" id="fitButton">Fit</button>
         <button class="button" id="locateButton">Locate</button>
       </div>
       <div class="stats" id="statsPanel"></div>
-      <div class="list" id="jobList"><div class="empty">Load a file to start.</div></div>
+      <div class="list" id="jobList"><div class="empty">Load the daily export to see jobs on the map.</div></div>
     </div>
   </div>
   <div class="toast" id="toast"></div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
-    // CONFIGURATION
-    const STORAGE_KEY = 'job-map-single-file-v1';
-    const URG = { over:'#f0546c', today:'#d29922', future:'#2ea043', none:'#8b98a9' };
+  /* =========================================================
+     JOB MAP
+     Reads the daily Causeway K01 export (.xlsx).
+     NOTE: "Mark done" is stored on THIS PHONE ONLY.
+     It does not update Causeway.
+     ========================================================= */
 
-    // STATE
-    let map, markerCluster, jobs = [], filteredJobs = [], completedSet = new Set(), userLocation = null, deferredPrompt = null;
-    let selectedJobId = null;
-    const state = { search:'', gang:'__all', date:'__all', completionFilter:'__all', sort:'spreadsheet', center:null, zoom:null };
+  var VERSION = 'v2.0';
+  var STORAGE_KEY = 'job-map-v2';
+  var CLUSTER_OFF_AT_ZOOM = 14;              // individual pins at/above this zoom
+  var URG = { over:'#f0546c', today:'#d29922', future:'#2ea043', none:'#8b98a9' };
 
-    // UTILITIES
-    function colIndex(letter) { return letter.toUpperCase().split('').reduce((a,c) => a*26 + (c.charCodeAt(0)-64), 0) - 1; }
-    function toDate(value) { if (value instanceof Date) return value; if (typeof value === 'number') return new Date(Math.round((value - 25569) * 86400 * 1000)); if (typeof value === 'string') { const d = new Date(value); return isNaN(d) ? null : d; } return null; }
-    function ymd(date) { if (!date) return ''; return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
-    function nice(date) { return date ? date.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}) : ''; }
-    function normalizeText(value) { return String(value || '').trim().toLowerCase(); }
-    function cleanDesc(value) { return String(value || '').trim().replace(/\s*\n\s*/g,' \n ').replace(/\s{2,}/g,' ').trim(); }
-    function atNumber(address) { const match = String(address || '').match(/\b(\d+[A-Za-z]?\b)/); return match ? match[1] : ''; }
-    function urgencyColor(date) { if (!date) return URG.none; const today = new Date(); today.setHours(0,0,0,0); const day = new Date(date); day.setHours(0,0,0,0); const diff = Math.round((day - today)/86400000); return diff < 0 ? URG.over : diff === 0 ? URG.today : URG.future; }
-    function urgencyLabel(date) { if (!date) return 'No completion date'; const today = new Date(); today.setHours(0,0,0,0); const day = new Date(date); day.setHours(0,0,0,0); const diff = Math.round((day - today)/86400000); return diff < 0 ? `${Math.abs(diff)}d overdue` : diff === 0 ? 'Due today' : `Due in ${diff}d`; }
-    function jobPriority(job) {
-      if (!job.complete) return 2;
-      const today = new Date(); today.setHours(0,0,0,0);
-      const due = new Date(job.complete); due.setHours(0,0,0,0);
-      const diff = Math.round((due - today)/86400000);
-      if (diff < 0) return 0;
-      if (diff === 0) return 1;
-      return 2;
-    }
-    function toast(message) { const el = document.getElementById('toast'); el.textContent = message; el.style.display = 'block'; clearTimeout(window._toastTimer); window._toastTimer = setTimeout(() => el.style.display = 'none', 2600); }
+  /* ---------- Column config (spreadsheet letters) ----------
+     If the export layout ever shifts, change these letters.  */
+  var COL_LETTERS = {
+    ref:'B', operative:'C', category:'H', town:'J', street:'K', status:'L',
+    task:'M', desc:'N',
+    requiredCompletion:'O',   // pin COLOUR keyed to this
+    plannedStart:'R',         // date FILTER keyed to this
+    lat:'AC', lng:'AD', jobType:'W', note:'AK', fullAddr:'AL', tm:'AR'
+  };
 
-    // STORAGE
-    function saveState() {
-      const payload = {
-        jobs: jobs.map(j => ({
-          id: j.id,
-          ref: j.ref,
-          operative: j.operative,
-          category: j.category,
-          town: j.town,
-          street: j.street,
-          fullAddr: j.fullAddr,
-          status: j.status,
-          jobType: j.jobType,
-          desc: j.desc,
-          note: j.note,
-          tm: j.tm,
-          gang: j.gang,
-          lat: j.lat,
-          lng: j.lng,
-          start: j.start ? j.start.toISOString() : null,
-          complete: j.complete ? j.complete.toISOString() : null,
-          startYmd: j.startYmd,
-          addr: j.addr,
-          atNo: j.atNo
-        })),
+  /* Optional header matching, used only if the export gains a header row.
+     Deliberately conservative: no "easting"/"northing" (grid metres, not
+     degrees), and no terms shared between two fields.        */
+  var HEADER_SYNONYMS = {
+    ref:['ref','reference','job ref','job reference','job number','job no'],
+    operative:['operative','engineer','technician','operative name'],
+    category:['category','work category'],
+    town:['town','city','post town'],
+    street:['street','address','street address','road','address line 1'],
+    fullAddr:['full address','combined address','address full'],
+    status:['status','job status','state'],
+    task:['gang','task','gang code','team','work gang'],
+    desc:['description','job description','works description','detail','details'],
+    requiredCompletion:['required completion','required completion date','completion date','complete by','due date','due by'],
+    plannedStart:['planned start','planned start date','planned date','start date'],
+    lat:['lat','latitude'],
+    lng:['lng','lon','long','longitude'],
+    note:['note','notes','comments','additional notes'],
+    jobType:['job type','task type','work type'],
+    tm:['tm','traffic management','traffic management requirement']
+  };
+
+  /* ---------- State ---------- */
+  var map, markerCluster;
+  var jobs = [], filteredJobs = [], completedSet = new Set(), userLocation = null;
+  var selectedJobId = null, fileLabel = '', loadedAt = null;
+  var state = { search:'', gang:'__all', date:'__all', completion:'active', sort:'spreadsheet', sheetH:'', collapsed:false };
+
+  /* ---------- Utilities ---------- */
+  function colIndex(letter) {
+    var v = 0, s = letter.toUpperCase();
+    for (var i = 0; i < s.length; i++) v = v * 26 + (s.charCodeAt(i) - 64);
+    return v - 1;
+  }
+  var COL = {};
+  Object.keys(COL_LETTERS).forEach(function (k) { COL[k] = colIndex(COL_LETTERS[k]); });
+
+  function toDate(v) {
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+    if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400 * 1000));
+    if (typeof v === 'string' && v.trim()) { var d = new Date(v); return isNaN(d.getTime()) ? null : d; }
+    return null;
+  }
+  // Always build date keys from LOCAL parts. toISOString() would shift a UK
+  // date back a day during BST, which is the day-out bug we hit before.
+  function ymd(d) {
+    if (!d) return '';
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+  function dateFromYmd(s) { var p = String(s).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function nice(d) { return d ? d.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' }) : ''; }
+  function todayYmd() { return ymd(new Date()); }
+  function midnight(d) { var x = new Date(d); x.setHours(0,0,0,0); return x; }
+  function daysFromToday(d) { return Math.round((midnight(d) - midnight(new Date())) / 86400000); }
+
+  function urgencyColor(d) {
+    if (!d) return URG.none;
+    var diff = daysFromToday(d);
+    return diff < 0 ? URG.over : diff === 0 ? URG.today : URG.future;
+  }
+  function urgencyLabel(d) {
+    if (!d) return 'No completion date';
+    var diff = daysFromToday(d);
+    if (diff < 0) return Math.abs(diff) + 'd overdue';
+    if (diff === 0) return 'Due today';
+    return 'Due in ' + diff + 'd';
+  }
+  function priorityOf(job) {
+    if (!job.complete) return 2;
+    var diff = daysFromToday(job.complete);
+    return diff < 0 ? 0 : diff === 0 ? 1 : 2;
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function toast(msg) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.display = 'block';
+    clearTimeout(window._tt);
+    window._tt = setTimeout(function () { el.style.display = 'none'; }, 2600);
+  }
+
+  /* ---------- Import ---------- */
+  function normHeader(v) {
+    return String(v || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9 ]/g, '');
+  }
+  function buildHeaderMap(row) {
+    var out = {};
+    if (!Array.isArray(row)) return out;
+    row.forEach(function (cellVal, i) {
+      var n = normHeader(cellVal);
+      if (!n) return;
+      var fields = Object.keys(HEADER_SYNONYMS);
+      for (var f = 0; f < fields.length; f++) {
+        var field = fields[f];
+        if (out[field] == null && HEADER_SYNONYMS[field].indexOf(n) !== -1) { out[field] = i; return; }
+      }
+    });
+    return out;
+  }
+  function cell(row, field, hmap) {
+    if (!Array.isArray(row)) return undefined;
+    if (hmap[field] != null) return row[hmap[field]];
+    return COL[field] != null ? row[COL[field]] : undefined;
+  }
+  function cleanDesc(v) {
+    return String(v || '').split(';').map(function (s) { return s.trim(); }).filter(Boolean).join(' - ');
+  }
+  function atNumber(full) {
+    var parts = String(full || '').split(';').map(function (s) { return s.trim(); });
+    for (var i = 0; i < parts.length; i++) if (/^at\s+number/i.test(parts[i])) return parts[i];
+    return '';
+  }
+
+  function parseRows(rows) {
+    var hmap = buildHeaderMap(rows[0]);
+    var hasHeader = Object.keys(hmap).length >= 3;
+    var body = hasHeader ? rows.slice(1) : rows;
+
+    return body.map(function (row, i) {
+      var lat = parseFloat(cell(row, 'lat', hmap));
+      var lng = parseFloat(cell(row, 'lng', hmap));
+      var ref = String(cell(row, 'ref', hmap) || '').trim();
+      var street = String(cell(row, 'street', hmap) || '');
+      var town = String(cell(row, 'town', hmap) || '');
+      var fullAddr = String(cell(row, 'fullAddr', hmap) || '');
+      var start = toDate(cell(row, 'plannedStart', hmap));
+      var complete = toDate(cell(row, 'requiredCompletion', hmap));
+
+      // ID is keyed to the job reference, so "done" marks survive a new export.
+      var id = ref ? 'ref:' + ref : 'row:' + i;
+      var addr = [street, town].filter(Boolean).join(', ') || fullAddr;
+
+      return {
+        id: id,
+        ref: ref,
+        street: street,
+        town: town,
+        fullAddr: fullAddr,
+        addr: addr,
+        atNo: atNumber(fullAddr),
+        status: String(cell(row, 'status', hmap) || ''),
+        jobType: String(cell(row, 'jobType', hmap) || ''),
+        category: String(cell(row, 'category', hmap) || ''),
+        desc: cleanDesc(cell(row, 'desc', hmap)),
+        note: String(cell(row, 'note', hmap) || ''),
+        tm: String(cell(row, 'tm', hmap) || ''),
+        operative: String(cell(row, 'operative', hmap) || ''),
+        gang: String(cell(row, 'task', hmap) || ''),
+        lat: isFinite(lat) ? lat : null,
+        lng: isFinite(lng) ? lng : null,
+        start: start,
+        complete: complete,
+        startYmd: ymd(start),
+        displayNum: 0,
+        marker: null
+      };
+    }).filter(function (j) { return j.ref || j.lat != null; });
+  }
+
+  function readFile(file) {
+    return file.arrayBuffer().then(function (buf) {
+      var wb = XLSX.read(new Uint8Array(buf), { type:'array', cellDates:true });
+      var sheet = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:true });
+      if (!rows.length) throw new Error('That sheet is empty.');
+      var parsed = parseRows(rows);
+      if (!parsed.length) throw new Error('No job rows found - check the export layout.');
+      return parsed;
+    });
+  }
+
+  /* ---------- Persistence ---------- */
+  function saveState() {
+    try {
+      var slim = jobs.map(function (j) {
+        var c = {};
+        Object.keys(j).forEach(function (k) { if (k !== 'marker') c[k] = j[k]; });
+        c.start = j.start ? j.start.toISOString() : null;
+        c.complete = j.complete ? j.complete.toISOString() : null;
+        return c;
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        jobs: slim,
         completed: Array.from(completedSet),
-        state
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    }
-    function loadState() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return false;
-        const saved = JSON.parse(raw);
-        jobs = saved.jobs.map(j => ({ ...j, start: j.start ? new Date(j.start) : null, complete: j.complete ? new Date(j.complete) : null, startYmd: j.startYmd || ymd(j.start ? new Date(j.start) : null) }));
-        completedSet = new Set(saved.completed || []);
-        Object.assign(state, saved.state || {});
-        return jobs.length > 0;
-      } catch (err) {
-        console.warn('Restore failed', err);
-        return false;
-      }
-    }
-
-    // IMPORT
-    const HEADER_SYNONYMS = {
-      ref:['ref','reference','job ref','job reference','job number','job no','reference no','job'],
-      operative:['operative','technician','crew','operative name','employee','engineer','field operative'],
-      category:['category','work category','type','work type','category/type'],
-      town:['town','city','suburb','area','location','postcode','post town'],
-      street:['street','address','street address','street line 1','addr','address line 1','road'],
-      fullAddr:['full address','fulladdr','combined address','address full','address 1','full address line'],
-      status:['status','job status','task status','state'],
-      task:['task','gang','crew','team','group','work gang'],
-      desc:['description','desc','notes','note','job description','detail','job details'],
-      requiredCompletion:['required completion','completion date','due','due date','complete by','required by','due by'],
-      plannedStart:['planned start','planned start date','planned date','start date','start','planned'],
-      lat:['lat','latitude','latitude (deg)','gps lat','coord lat','northing'],
-      lng:['lng','lon','long','longitude','longitude (deg)','gps lng','coord lng','easting'],
-      note:['note','notes','additional notes','comments'],
-      jobType:['job type','type','task type','service type'],
-      tm:['tm','team manager','manager','supervisor']
-    };
-    const COL_LETTERS = {
-      ref:'B', operative:'C', operativeName:'C', status:'L', task:'M', gang:'M',
-      desc:'N', requiredCompletion:'O', plannedStart:'R', lat:'AC', lng:'AD',
-      fullAddr:'AL', note:'AK', jobType:'W', tm:'AR', town:'J', street:'K'
-    };
-    const COL = Object.fromEntries(Object.entries(COL_LETTERS).map(([k,v]) => [k, colIndex(v)]));
-    function normalizeHeader(value) {
-      return String(value || '').trim().toLowerCase().replace(/\s+/g,' ').replace(/[:#]/g,'').replace(/[^a-z0-9 ]/g,'');
-    }
-    function findHeaderField(label) {
-      const normalized = normalizeHeader(label);
-      for (const [field, synonyms] of Object.entries(HEADER_SYNONYMS)) {
-        if (synonyms.includes(normalized)) return field;
-      }
-      return null;
-    }
-    function buildHeaderMap(headerRow) {
-      if (!Array.isArray(headerRow)) return {};
-      return headerRow.reduce((map, value, index) => {
-        const field = findHeaderField(value);
-        if (field) map[field] = index;
-        return map;
-      }, {});
-    }
-    function getCell(row, field, headerMap) {
-      if (!Array.isArray(row)) return undefined;
-      if (headerMap[field] != null) return row[headerMap[field]];
-      const fallback = COL[field];
-      return fallback != null ? row[fallback] : undefined;
-    }
-    function parseRows(rows) {
-      const headerMap = buildHeaderMap(rows[0]);
-      // If the export has no header row, fall back to the fixed column layout.
-      const hasHeader = Object.keys(headerMap).length >= 3 && rows.length > 1;
-      const dataRows = hasHeader ? rows.slice(1) : rows;
-      return dataRows.map((row, index) => {
-        const lat = parseFloat(getCell(row, 'lat', headerMap));
-        const lng = parseFloat(getCell(row, 'lng', headerMap));
-        const start = toDate(getCell(row, 'plannedStart', headerMap));
-        const complete = toDate(getCell(row, 'requiredCompletion', headerMap));
-        const street = getCell(row, 'street', headerMap) || '';
-        const town = getCell(row, 'town', headerMap) || '';
-        const fullAddr = getCell(row, 'fullAddr', headerMap) || '';
-        const descValue = getCell(row, 'desc', headerMap) || getCell(row, 'note', headerMap) || '';
-        return {
-          id: `job-${index}-${String(getCell(row, 'ref', headerMap)||'')}`,
-          ref: String(getCell(row, 'ref', headerMap) || ''),
-          operative: String(getCell(row, 'operative', headerMap) || ''),
-          category: String(getCell(row, 'category', headerMap) || ''),
-          town: String(town),
-          street: String(street),
-          fullAddr: String(fullAddr),
-          status: String(getCell(row, 'status', headerMap) || ''),
-          jobType: String(getCell(row, 'jobType', headerMap) || ''),
-          desc: cleanDesc(descValue),
-          note: String(getCell(row, 'note', headerMap) || ''),
-          tm: String(getCell(row, 'tm', headerMap) || ''),
-          gang: String(getCell(row, 'task', headerMap) || ''),
-          lat: Number.isFinite(lat) ? lat : null,
-          lng: Number.isFinite(lng) ? lng : null,
-          start,
-          complete,
-          startYmd: ymd(start),
-          addr: [street, town, fullAddr].filter(Boolean).join(', '),
-          atNo: atNumber(fullAddr),
-          marker: null,
-          visible: true
-        };
-      }).filter(j => j.ref || j.lat != null || j.lng != null);
-    }
-    function loadFile(file) {
-      return file.arrayBuffer().then(buffer => {
-        const data = new Uint8Array(buffer);
-        let workbook;
-        try {
-          workbook = XLSX.read(data, { type:'array', cellDates:true });
-        } catch (err) {
-          try {
-            workbook = XLSX.read(buffer, { type:'array', cellDates:true });
-          } catch (inner) {
-            console.error('XLSX parse failed', err, inner);
-            throw new Error('Unable to read spreadsheet file. Make sure it is a valid .xlsx export.');
-          }
-        }
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:true });
-        if (!rows.length) throw new Error('Sheet is empty');
-        const parsed = parseRows(rows);
-        if (!parsed.length) throw new Error('No valid job rows found. Confirm the sheet layout matches the expected export.');
-        return parsed;
+        state: state,
+        fileLabel: fileLabel,
+        loadedAt: loadedAt ? loadedAt.toISOString() : null
+      }));
+    } catch (e) { /* quota / private mode - non-fatal */ }
+  }
+  function restoreState() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      var saved = JSON.parse(raw);
+      jobs = (saved.jobs || []).map(function (j) {
+        j.start = j.start ? new Date(j.start) : null;
+        j.complete = j.complete ? new Date(j.complete) : null;
+        j.marker = null;
+        return j;
       });
-    }
+      completedSet = new Set(saved.completed || []);
+      if (saved.state) Object.keys(saved.state).forEach(function (k) { state[k] = saved.state[k]; });
+      fileLabel = saved.fileLabel || '';
+      loadedAt = saved.loadedAt ? new Date(saved.loadedAt) : null;
+      return jobs.length > 0;
+    } catch (e) { return false; }
+  }
 
-    // FILTERING
-    function filterJobs() {
-      const query = normalizeText(state.search);
-      filteredJobs = jobs.filter(job => {
-        const isCompleted = completedSet.has(job.id);
-        if (state.completionFilter === 'active' && isCompleted) return false;
-        if (state.completionFilter === 'completed' && !isCompleted) return false;
-        if (state.gang !== '__all' && job.gang !== state.gang) return false;
-        if (state.date !== '__all' && job.startYmd !== state.date) return false;
-        if (query) {
-          const haystack = [job.ref, job.addr, job.town, job.desc, job.note, job.gang, job.operative].join(' ').toLowerCase();
-          if (!haystack.includes(query)) return false;
-        }
-        return true;
-      });
-      const sorters = {
-        spreadsheet: (a,b) => 0,
-        duedate: (a,b) => ((a.complete?new Date(a.complete).getTime():9e15)-(b.complete?new Date(b.complete).getTime():9e15)) || compareText(a.ref,b.ref),
-        planned: (a,b) => ((a.start?new Date(a.start).getTime():9e15)-(b.start?new Date(b.start).getTime():9e15)) || compareText(a.ref,b.ref),
-        ref: (a,b) => compareText(a.ref,b.ref),
-        addr: (a,b) => compareText(a.addr,b.addr),
-        distance: (a,b) => {
-          if (!userLocation) return compareText(a.ref,b.ref);
-          return distance(a) - distance(b) || compareText(a.ref,b.ref);
-        }
-      };
-      filteredJobs.sort(sorters[state.sort] || sorters.spreadsheet);
-    }
-    function compareText(a,b) { return String(a||'').localeCompare(String(b||''), undefined, { sensitivity:'base' }); }
-    function distance(job) { if (!userLocation || job.lat==null || job.lng==null) return Number.MAX_SAFE_INTEGER; const x = job.lat - userLocation.lat; const y = job.lng - userLocation.lng; return Math.sqrt(x*x+y*y); }
+  /* ---------- Map ---------- */
+  function initMap() {
+    map = L.map('map', { zoomControl:true }).setView([52.057, -2.70], 12);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      maxZoom:20, subdomains:'abcd', crossOrigin:true,
+      attribution:'&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
 
-    // MARKER MANAGER
-    function initMap() {
-      map = L.map('map',{zoomControl:true,tap:false}).setView([52.057,-2.7],13);
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,subdomains:'abcd',crossOrigin:true,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
-      markerCluster = L.markerClusterGroup({
-        chunkedLoading:true,
-        showCoverageOnHover:false,
-        spiderfyOnMaxZoom:true,
-        iconCreateFunction: cluster => {
-          let clusterPriority = 2;
-          let totalCount = 0;
-          cluster.getAllChildMarkers().forEach(marker => {
-            totalCount += 1;
-            if (!marker.options.completed) {
-              if (marker.options.priority === 0) clusterPriority = 0;
-              else if (marker.options.priority === 1 && clusterPriority > 1) clusterPriority = 1;
-            }
-          });
-          const color = totalCount === 0 ? '#8b98a9' : clusterPriority === 0 ? '#f0546c' : clusterPriority === 1 ? '#d29922' : '#2ea043';
-          return L.divIcon({ html:`<div class="marker-cluster" style="background:${color}"><span>${totalCount}</span></div>`, className:'', iconSize:[40,40], iconAnchor:[20,20] });
-        }
-      });
-      map.addLayer(markerCluster);
-      if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
-    }
-    function buildMarkers() {
-      jobs.forEach((job,index) => {
-        if (job.marker) return;
-        if (job.lat == null || job.lng == null) return;
-        const completed = completedSet.has(job.id);
-        const className = completed ? 'job-marker completed' : 'job-marker';
-        const color = completed ? '#8b98a9' : urgencyColor(job.complete);
-        const priority = jobPriority(job);
-        const icon = L.divIcon({ html:`<div class="${className}" style="background:${color}"></div>`, className:'', iconSize:[16,16], iconAnchor:[8,8] });
-        const marker = L.marker([job.lat, job.lng], { icon, priority, completed });
-        marker.bindPopup(buildPopup(job, index+1), { maxWidth:320 });
-        marker.on('click', () => scrollToRow(job.id));
-        job.marker = marker;
-      });
-    }
-    function refreshMarkers() {
-      markerCluster.clearLayers();
-      filteredJobs.forEach(job => { if (job.marker) markerCluster.addLayer(job.marker); });
-    }
-    function updateMarker(job, index) {
-      if (!job.marker) return;
-      const completed = completedSet.has(job.id);
-      const className = completed ? 'job-marker completed' : 'job-marker';
-      const color = completed ? '#8b98a9' : urgencyColor(job.complete);
-      const priority = jobPriority(job);
-      const icon = L.divIcon({ html:`<div class="${className}" style="background:${color}"></div>`, className:'', iconSize:[16,16], iconAnchor:[8,8] });
-      job.marker.setIcon(icon);
-      job.marker.options.priority = priority;
-      job.marker.options.completed = completed;
-      job.marker.bindPopup(buildPopup(job, index+1));
-    }
-
-    // POPUPS
-    function buildPopup(job, number) {
-      const rows = [];
-      if (job.addr) rows.push(`<div class="pp-addr">${job.addr}${job.atNo?` — ${job.atNo}`:''}</div>`);
-      const tags = [job.jobType, job.category].filter(Boolean).join(' · ');
-      if (tags) rows.push(`<div class="pp-tags">${tags}</div>`);
-      if (job.desc) rows.push(`<div class="pp-desc">${job.desc}</div>`);
-      const meta = [];
-      if (job.start) meta.push(`Planned start: ${nice(job.start)}`);
-      if (job.complete) meta.push(`Complete by: ${nice(job.complete)} (${urgencyLabel(job.complete)})`);
-      if (job.tm) meta.push(`TM: ${job.tm}`);
-      if (job.status) meta.push(`Status: ${job.status}`);
-      if (job.note) meta.push(job.note);
-      rows.push(`<div class="pp-meta">${meta.join('<br>')}</div>`);
-      rows.push(`<div class="pp-coords">${job.lat!=null?`${job.lat.toFixed(6)}, ${job.lng.toFixed(6)}`:'No coordinates'}</div>`);
-      return `<div class="pp"><div class="pp-head" style="border-color:${urgencyColor(job.complete)}"><span class="pp-n" style="background:${urgencyColor(job.complete)}">${number}</span> ${job.ref}</div>${rows.join('')}<div class="pp-btns"><button class="pp-copy" onclick="copyCoords(${job.lat},${job.lng})">Copy coords</button><button class="pp-nav" onclick="navigateTo(${job.lat},${job.lng})">Navigate</button></div></div>`;
-    }
-    function copyCoords(lat, lng) {
-      const txt = `${lat}, ${lng}`;
-      if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast('Copied ' + txt), () => prompt('Copy coordinates', txt));
-      else prompt('Copy coordinates', txt);
-    }
-    function navigateTo(lat, lng) {
-      if (lat == null || lng == null) return;
-      window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
-    }
-    window.copyCoords = copyCoords;
-    window.navigateTo = navigateTo;
-
-    // GPS
-    function locateUser() {
-      if (!navigator.geolocation) { toast('GPS unavailable'); return; }
-      navigator.geolocation.getCurrentPosition(position => {
-        userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
-        L.circleMarker([userLocation.lat, userLocation.lng], { radius:8, color:'#fff', fillColor:'#3d8bfd', fillOpacity:1, weight:2 }).addTo(map).bindPopup('Your location');
-        map.setView([userLocation.lat, userLocation.lng], 14);
-        renderAll();
-      }, () => toast('Unable to get location'));
-    }
-
-    // PWA
-    function installReady() {
-      document.getElementById('installButton').hidden = !deferredPrompt;
-    }
-    function createManifest() {
-      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#3d8bfd"/><path d="M96 32c-24 0-44 20-44 44 0 34 44 76 44 76s44-42 44-76c0-24-20-44-44-44zm0 56a12 12 0 1 1 0-24 12 12 0 0 1 0 24z" fill="white"/></svg>';
-      const manifest = {
-        name:'Job Map',
-        short_name:'JobMap',
-        start_url:'./job-map.html',
-        display:'standalone',
-        background_color:'#0f1419',
-        theme_color:'#0f1419',
-        icons:[{ src:`data:image/svg+xml,${encodeURIComponent(svg)}`, sizes:'192x192', type:'image/svg+xml' }]
-      };
-      const blob = new Blob([JSON.stringify(manifest)], { type:'application/manifest+json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('link');
-      link.rel = 'manifest';
-      link.href = url;
-      document.head.appendChild(link);
-    }
-    function registerServiceWorker() {
-      if ('serviceWorker' in navigator) {
-        const workerCode = `self.addEventListener('install', event => { const cacheName = 'job-map-sw-v1'; event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(['./','./job-map.html']))).then(() => self.skipWaiting()); }); self.addEventListener('activate', event => { event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== 'job-map-sw-v1').map(key => caches.delete(key))))).then(() => self.clients.claim()); }); self.addEventListener('fetch', event => { if (event.request.method !== 'GET') return; event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(response => { const copy = response.clone(); caches.open('job-map-sw-v1').then(cache => cache.put(event.request, copy)); return response; }).catch(() => caches.match('./job-map.html')))); });`;
-        const blob = new Blob([workerCode], { type:'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        navigator.serviceWorker.register(url).catch(()=>{});
-      }
-    }
-
-    // RENDERING
-    function updateFilters() {
-      const gangSelect = document.getElementById('gangFilter');
-      const dateSelect = document.getElementById('dateFilter');
-      const gangValues = [...new Set(jobs.map(j => j.gang).filter(Boolean))].sort();
-      const dateValues = [...new Set(jobs.map(j => j.startYmd).filter(Boolean))].sort();
-      const preserveGang = gangSelect.value;
-      const preserveDate = dateSelect.value;
-      gangSelect.innerHTML = '<option value="__all">All gangs</option>';
-      gangValues.forEach(g => gangSelect.insertAdjacentHTML('beforeend', `<option value="${g}">${g}</option>`));
-      dateSelect.innerHTML = '<option value="__all">All planned dates</option>';
-      dateValues.forEach(d => dateSelect.insertAdjacentHTML('beforeend', `<option value="${d}">${d}</option>`));
-      if (gangValues.includes(preserveGang)) gangSelect.value = preserveGang;
-      if (dateValues.includes(preserveDate)) dateSelect.value = preserveDate;
-    }
-    function renderList() {
-      const container = document.getElementById('jobList');
-      container.innerHTML = '';
-      if (!filteredJobs.length) {
-        container.innerHTML = '<div class="empty">No jobs match the current filters.</div>';
-        return;
-      }
-      filteredJobs.forEach((job, index) => {
-        const missing = job.lat == null || job.lng == null;
-        const color = urgencyColor(job.complete);
-        const done = completedSet.has(job.id);
-        const item = document.createElement('div');
-        item.className = 'job-row' + (done ? ' completed' : '') + (selectedJobId === job.id ? ' selected' : '');
-        item.dataset.id = job.id;
-        item.innerHTML = `<div class="job-pin" style="background:${missing?'var(--line)':color}">${missing?'!':index+1}</div><div class="job-body"><div class="job-ref">${job.ref || 'No reference'}${done?` <span class="chip" style="border-color:var(--ok);color:var(--ok)">Completed</span>`:''}</div><div class="job-addr">${job.addr || job.fullAddr || 'No address'}</div><div class="job-meta">${job.jobType?`<span class="chip">${job.jobType}</span>`:''}${job.status?`<span class="chip">${job.status}</span>`:''}${job.complete?`<span class="chip" style="color:${color};border-color:${color}">${urgencyLabel(job.complete)}</span>`:''}</div><div class="job-actions"><button class="job-action nav-button" ${missing?'disabled':''}>Nav</button><button class="job-action complete-button">${done?'Restore job':'Mark complete'}</button></div></div>`;
-        item.querySelector('.job-body').onclick = () => { if (!missing) { selectJob(job.id); if (job.marker) job.marker.openPopup(); map.panTo([job.lat, job.lng]); }};
-        item.querySelector('.nav-button').onclick = event => { event.stopPropagation(); if (!missing) { navigateTo(job.lat, job.lng); }};
-        item.querySelector('.complete-button').onclick = event => { event.stopPropagation(); toggleCompleted(job.id); };
-        container.appendChild(item);
-      });
-    }
-    function selectJob(id) {
-      selectedJobId = id;
-      renderList();
-      const row = document.querySelector(`[data-id="${id}"]`);
-      if (!row) return;
-      row.scrollIntoView({ behavior:'smooth', block:'center' });
-    }
-    function scrollToRow(id) {
-      selectJob(id);
-    }
-    function renderStats() {
-      const total = jobs.length;
-      const mapped = jobs.filter(j => j.lat != null && j.lng != null).length;
-      const overdue = jobs.filter(j => j.complete && new Date(j.complete) < new Date(new Date().setHours(0,0,0,0))).length;
-      const dueToday = jobs.filter(j => j.complete && ymd(new Date(j.complete)) === ymd(new Date())).length;
-      const future = jobs.filter(j => j.complete && new Date(j.complete) > new Date(new Date().setHours(0,0,0,0))).length;
-      const completed = completedSet.size;
-      document.getElementById('statsPanel').innerHTML = `<div class="stat-card"><div class="stat-label">Total jobs</div><div class="stat-value">${total}</div></div><div class="stat-card"><div class="stat-label">Mapped jobs</div><div class="stat-value">${mapped}</div></div><div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-value">${overdue}</div></div><div class="stat-card"><div class="stat-label">Due today</div><div class="stat-value">${dueToday}</div></div><div class="stat-card"><div class="stat-label">Future</div><div class="stat-value">${future}</div></div><div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value">${completed}</div></div>`;
-    }
-    function toggleCompleted(jobId) {
-      if (completedSet.has(jobId)) completedSet.delete(jobId);
-      else completedSet.add(jobId);
-      renderAll();
-      toast(completedSet.has(jobId) ? 'Marked complete' : 'Restored job');
-    }
-    function renderAll() {
-      filterJobs();
-      renderStats();
-      renderList();
-      jobs.forEach((job, index) => updateMarker(job, index + 1));
-      refreshMarkers();
-      saveState();
-    }
-
-    // STARTUP
-    function init() {
-      initMap();
-      document.getElementById('fileInput').addEventListener('change', event => {
-        const file = event.target.files[0];
-        if (!file) return;
-        document.getElementById('statusPill').textContent = 'Loading...';
-        loadFile(file).then(parsed => {
-          jobs = parsed;
-          completedSet = new Set();
-          updateFilters();
-          buildMarkers();
-          renderAll();
-          document.getElementById('statusPill').textContent = `Loaded ${jobs.length} jobs`;
-        }).catch(err => {
-          console.error(err);
-          const message = err && err.message ? err.message : 'Invalid spreadsheet or missing data';
-          toast(message);
-          document.getElementById('statusPill').textContent = message;
+    markerCluster = L.markerClusterGroup({
+      chunkedLoading: true,
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: true,
+      disableClusteringAtZoom: CLUSTER_OFF_AT_ZOOM,  // pins, not clusters, at working zoom
+      maxClusterRadius: 55,
+      iconCreateFunction: function (cluster) {
+        var kids = cluster.getAllChildMarkers();
+        // A cluster takes the colour of its most urgent job.
+        var worst = 2;
+        kids.forEach(function (m) { if (m.options.priority < worst) worst = m.options.priority; });
+        var color = worst === 0 ? URG.over : worst === 1 ? URG.today : URG.future;
+        return L.divIcon({
+          html: '<div class="marker-cluster" style="background:' + color + '">' + kids.length + '</div>',
+          className: '', iconSize: [42,42], iconAnchor: [21,21]
         });
-      });
-      document.getElementById('searchInput').addEventListener('input', event => { state.search = event.target.value; renderAll(); });
-      document.getElementById('gangFilter').addEventListener('change', event => { state.gang = event.target.value; renderAll(); });
-      document.getElementById('dateFilter').addEventListener('change', event => { state.date = event.target.value; renderAll(); });
-      document.getElementById('completionFilter').addEventListener('change', event => { state.completionFilter = event.target.value; renderAll(); });
-      document.getElementById('sortFilter').addEventListener('change', event => { state.sort = event.target.value; renderAll(); });
-      document.getElementById('locateButton').addEventListener('click', locateUser);
-      document.getElementById('installButton').addEventListener('click', async () => {
-        if (!deferredPrompt) return;
-        deferredPrompt.prompt();
-        const choice = await deferredPrompt.userChoice;
-        deferredPrompt = null;
-        document.getElementById('installButton').hidden = true;
-        if (choice.outcome === 'accepted') toast('Install accepted');
-      });
-      window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredPrompt = event; document.getElementById('installButton').hidden = false; });
-      window.addEventListener('appinstalled', () => { document.getElementById('installButton').hidden = true; toast('App installed'); });
-
-      createManifest();
-      registerServiceWorker();
-      if (loadState()) {
-        updateFilters();
-        buildMarkers();
-        renderAll();
-        document.getElementById('statusPill').textContent = 'Restored saved jobs';
       }
+    });
+    map.addLayer(markerCluster);
+
+    var kick = function () { map.invalidateSize(); };
+    [0, 150, 400, 800].forEach(function (t) { setTimeout(kick, t); });
+    window.addEventListener('resize', kick);
+    if (window.ResizeObserver) new ResizeObserver(kick).observe(document.querySelector('.map-container'));
+  }
+
+  function markerIcon(job, done) {
+    var color = done ? '#8b98a9' : urgencyColor(job.complete);
+    var cls = 'job-marker' + (done ? ' completed' : '');
+    var label = done ? '' : (job.displayNum || '');
+    return L.divIcon({
+      html: '<div class="' + cls + '" style="background:' + color + '">' + label + '</div>',
+      className: '', iconSize: [28,28], iconAnchor: [14,14]
+    });
+  }
+
+  // Only the FILTERED jobs go on the map, so cluster counts always mean
+  // "jobs still to do here" (completed jobs drop off by default).
+  function syncMarkers() {
+    markerCluster.clearLayers();
+    var live = [];
+    filteredJobs.forEach(function (job) {
+      if (job.lat == null || job.lng == null) return;
+      var done = completedSet.has(job.id);
+      if (!job.marker) {
+        job.marker = L.marker([job.lat, job.lng], { icon: markerIcon(job, done), priority: priorityOf(job) });
+        job.marker.on('click', function () { selectJob(job.id, false); });
+      } else {
+        job.marker.setIcon(markerIcon(job, done));
+        job.marker.options.priority = priorityOf(job);
+      }
+      job.marker.bindPopup(popupHtml(job), { maxWidth:300 });
+      live.push(job.marker);
+    });
+    markerCluster.addLayers(live);
+  }
+
+  function fitToFilter() {
+    var pts = [];
+    filteredJobs.forEach(function (j) { if (j.lat != null) pts.push([j.lat, j.lng]); });
+    if (!pts.length) return;
+    map.fitBounds(L.latLngBounds(pts).pad(0.18), { maxZoom: 15 });
+  }
+
+  /* ---------- Popup ---------- */
+  function popupHtml(job) {
+    var color = urgencyColor(job.complete);
+    var parts = [];
+
+    if (job.addr) parts.push('<div class="pp-addr">' + esc(job.addr) + (job.atNo ? ' - ' + esc(job.atNo) : '') + '</div>');
+    var tags = [job.jobType, job.category].filter(Boolean).map(esc).join(' / ');
+    if (tags) parts.push('<div class="pp-tags">' + tags + '</div>');
+    if (job.desc) parts.push('<div class="pp-desc">' + esc(job.desc) + '</div>');
+
+    var meta = [];
+    if (job.start) meta.push('Planned start: ' + nice(job.start));
+    if (job.complete) meta.push('Complete by: ' + nice(job.complete) + ' (' + urgencyLabel(job.complete) + ')');
+    if (job.tm) meta.push('TM: ' + esc(job.tm));
+    if (job.status) meta.push('Status: ' + esc(job.status));
+    if (job.note) meta.push(esc(job.note));
+    parts.push('<div class="pp-meta">' + meta.join('<br>') + '</div>');
+
+    if (job.lat != null) {
+      parts.push('<div class="pp-coords">' + job.lat.toFixed(6) + ', ' + job.lng.toFixed(6) + '</div>');
+      parts.push('<div class="pp-btns">' +
+        '<button class="pp-copy" onclick="copyCoords(' + job.lat + ',' + job.lng + ')">Copy coords</button>' +
+        '<button class="pp-nav" onclick="showOnMaps(' + job.lat + ',' + job.lng + ',&quot;' + esc(job.ref) + '&quot;)">Open in Maps</button>' +
+        '</div>');
     }
-    init();
+
+    return '<div class="pp">' +
+      '<div class="pp-head" style="border-color:' + color + '">' +
+        '<span class="pp-n" style="background:' + color + '">' + (job.displayNum || '') + '</span>' +
+        esc(job.ref || 'Job') +
+      '</div>' + parts.join('') + '</div>';
+  }
+
+  /* Uses the geo: URI scheme, NOT an https link.
+     Link-rewriters such as Mimecast only touch http/https, so this passes
+     straight through to Google Maps. It DROPS A PIN at the job rather than
+     forcing turn-by-turn - the gang taps Directions themselves if they want it. */
+  function showOnMaps(lat, lng, ref) {
+    if (lat == null || lng == null) return;
+    window.location.href = 'geo:0,0?q=' + lat + ',' + lng + '(' + encodeURIComponent(ref || 'Job') + ')';
+  }
+  function copyCoords(lat, lng) {
+    var txt = lat + ',' + lng;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(txt).then(
+        function () { toast('Copied ' + txt + ' - paste into Google Maps'); },
+        function () { prompt('Copy these coordinates:', txt); }
+      );
+    } else {
+      prompt('Copy these coordinates:', txt);
+    }
+  }
+  window.showOnMaps = showOnMaps;
+  window.copyCoords = copyCoords;
+
+  /* ---------- Filtering ---------- */
+  function cmp(a, b) {
+    return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity:'base' });
+  }
+  function distanceOf(job) {
+    if (!userLocation || job.lat == null) return Number.MAX_SAFE_INTEGER;
+    var dx = job.lat - userLocation.lat, dy = job.lng - userLocation.lng;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function applyFilters() {
+    var q = state.search.trim().toLowerCase();
+
+    filteredJobs = jobs.filter(function (job) {
+      var done = completedSet.has(job.id);
+      if (state.completion === 'active' && done) return false;
+      if (state.completion === 'completed' && !done) return false;
+      if (state.gang !== '__all' && job.gang !== state.gang) return false;
+      if (state.date !== '__all' && job.startYmd !== state.date) return false;
+      if (q) {
+        var hay = [job.ref, job.addr, job.desc, job.gang, job.jobType, job.note].join(' ').toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+
+    var time = function (d) { return d ? new Date(d).getTime() : 9e15; };
+    var sorters = {
+      spreadsheet: function () { return 0; },
+      duedate: function (a, b) { return (time(a.complete) - time(b.complete)) || cmp(a.ref, b.ref); },
+      planned:  function (a, b) { return (time(a.start) - time(b.start)) || cmp(a.ref, b.ref); },
+      ref:      function (a, b) { return cmp(a.ref, b.ref); },
+      addr:     function (a, b) { return cmp(a.addr, b.addr); },
+      distance: function (a, b) { return userLocation ? (distanceOf(a) - distanceOf(b)) : cmp(a.ref, b.ref); }
+    };
+    filteredJobs.sort(sorters[state.sort] || sorters.spreadsheet);
+
+    // Pin numbers and list numbers must always agree.
+    filteredJobs.forEach(function (job, i) { job.displayNum = i + 1; });
+  }
+
+  /* ---------- Rendering ---------- */
+  function rebuildDropdowns() {
+    var gangSel = document.getElementById('gangFilter');
+    var dateSel = document.getElementById('dateFilter');
+
+    var gangs = [];
+    jobs.forEach(function (j) { if (j.gang && gangs.indexOf(j.gang) === -1) gangs.push(j.gang); });
+    gangs.sort();
+
+    gangSel.innerHTML = '<option value="__all">All gangs (' + jobs.length + ')</option>';
+    gangs.forEach(function (g) {
+      var n = jobs.filter(function (j) { return j.gang === g; }).length;
+      gangSel.insertAdjacentHTML('beforeend',
+        '<option value="' + esc(g) + '">' + esc(g) + ' (' + n + ')</option>');
+    });
+    gangSel.value = gangs.indexOf(state.gang) !== -1 ? state.gang : '__all';
+    state.gang = gangSel.value;
+
+    var pool = state.gang === '__all' ? jobs : jobs.filter(function (j) { return j.gang === state.gang; });
+    var dates = [];
+    pool.forEach(function (j) { if (j.startYmd && dates.indexOf(j.startYmd) === -1) dates.push(j.startYmd); });
+    dates.sort();
+
+    dateSel.innerHTML = '<option value="__all">All planned dates (' + pool.length + ')</option>';
+    dates.forEach(function (d) {
+      var n = pool.filter(function (j) { return j.startYmd === d; }).length;
+      var todayTag = (d === todayYmd()) ? ' - today' : '';
+      dateSel.insertAdjacentHTML('beforeend',
+        '<option value="' + d + '">' + nice(dateFromYmd(d)) + todayTag + ' (' + n + ')</option>');
+    });
+    dateSel.value = dates.indexOf(state.date) !== -1 ? state.date : '__all';
+    state.date = dateSel.value;
+  }
+
+  function renderStats() {
+    var active = jobs.filter(function (j) { return !completedSet.has(j.id); });
+    var overdue = active.filter(function (j) { return j.complete && daysFromToday(j.complete) < 0; }).length;
+    var dueToday = active.filter(function (j) { return j.complete && daysFromToday(j.complete) === 0; }).length;
+    var noCoords = jobs.filter(function (j) { return j.lat == null; }).length;
+
+    document.getElementById('statsPanel').innerHTML =
+      '<div class="stat">Showing<b>' + filteredJobs.length + '</b></div>' +
+      '<div class="stat">Overdue<b style="color:' + URG.over + '">' + overdue + '</b></div>' +
+      '<div class="stat">Due today<b style="color:' + URG.today + '">' + dueToday + '</b></div>' +
+      '<div class="stat">Done<b style="color:' + URG.future + '">' + completedSet.size + '</b></div>' +
+      (noCoords ? '<div class="stat">No coords<b>' + noCoords + '</b></div>' : '');
+
+    var pill = document.getElementById('overduePill');
+    if (overdue > 0) { pill.hidden = false; pill.textContent = overdue + ' overdue'; }
+    else pill.hidden = true;
+  }
+
+  function renderList() {
+    var list = document.getElementById('jobList');
+    list.innerHTML = '';
+
+    if (!jobs.length) {
+      list.innerHTML = '<div class="empty">Load the daily export to see jobs on the map.</div>';
+      return;
+    }
+    if (!filteredJobs.length) {
+      list.innerHTML = '<div class="empty">No jobs match the current filters.</div>';
+      return;
+    }
+
+    filteredJobs.forEach(function (job) {
+      var missing = job.lat == null;
+      var done = completedSet.has(job.id);
+      var color = done ? '#8b98a9' : urgencyColor(job.complete);
+
+      var row = document.createElement('div');
+      row.className = 'job-row' + (done ? ' completed' : '') + (selectedJobId === job.id ? ' selected' : '');
+      row.setAttribute('data-id', job.id);
+      row.innerHTML =
+        '<div class="job-pin" style="background:' + (missing ? 'var(--line)' : color) + '">' +
+          (missing ? '!' : job.displayNum) +
+        '</div>' +
+        '<div>' +
+          '<div class="job-ref">' + esc(job.ref || 'No reference') + '</div>' +
+          '<div class="job-addr">' + esc(job.addr || 'No address') + (missing ? ' - no coordinates' : '') + '</div>' +
+          '<div class="job-meta">' +
+            (job.jobType ? '<span class="chip">' + esc(job.jobType) + '</span>' : '') +
+            (job.start ? '<span class="chip">Start ' + nice(job.start) + '</span>' : '') +
+            (job.complete ? '<span class="chip" style="color:' + color + ';border-color:' + color + '">' + urgencyLabel(job.complete) + '</span>' : '') +
+          '</div>' +
+          '<div class="job-actions">' +
+            '<button class="job-action nav"' + (missing ? ' disabled' : '') + '>Open in Maps</button>' +
+            '<button class="job-action done">' + (done ? 'Undo done' : 'Mark done (my phone)') + '</button>' +
+          '</div>' +
+        '</div>';
+
+      row.querySelector('.job-ref').onclick = function () { if (!missing) selectJob(job.id, true); };
+      row.querySelector('.job-addr').onclick = function () { if (!missing) selectJob(job.id, true); };
+      if (!missing) {
+        row.querySelector('.nav').onclick = function (e) {
+          e.stopPropagation();
+          showOnMaps(job.lat, job.lng, job.ref);
+        };
+      }
+      row.querySelector('.done').onclick = function (e) {
+        e.stopPropagation();
+        toggleDone(job.id);
+      };
+      list.appendChild(row);
+    });
+  }
+
+  function selectJob(id, panTo) {
+    selectedJobId = id;
+    var job = null;
+    for (var i = 0; i < jobs.length; i++) if (jobs[i].id === id) { job = jobs[i]; break; }
+    renderList();
+    var row = document.querySelector('[data-id="' + id + '"]');
+    if (row) row.scrollIntoView({ behavior:'smooth', block:'center' });
+    if (job && job.marker && panTo && job.lat != null) {
+      map.setView([job.lat, job.lng], Math.max(map.getZoom(), CLUSTER_OFF_AT_ZOOM));
+      markerCluster.zoomToShowLayer(job.marker, function () { job.marker.openPopup(); });
+    }
+  }
+
+  function toggleDone(id) {
+    if (completedSet.has(id)) completedSet['delete'](id); else completedSet.add(id);
+    toast(completedSet.has(id) ? 'Marked done (this phone only)' : 'Restored');
+    render();
+  }
+
+  /* ---------- Stale-data check ---------- */
+  function checkStale() {
+    var bar = document.getElementById('staleBar');
+    if (!jobs.length) { bar.className = 'stale-bar'; return; }
+
+    var times = [];
+    jobs.forEach(function (j) { if (j.start) times.push(j.start.getTime()); });
+    if (!times.length) { bar.className = 'stale-bar'; return; }
+
+    var latest = new Date(Math.max.apply(null, times));
+    var diff = daysFromToday(latest);
+    if (diff < 0) {
+      var n = Math.abs(diff);
+      bar.className = 'stale-bar show';
+      bar.textContent = 'This export looks out of date - the latest planned start in it is ' +
+        nice(latest) + ', ' + n + ' day' + (n === 1 ? '' : 's') + ' ago. Check for a newer file.';
+    } else {
+      bar.className = 'stale-bar';
+    }
+  }
+
+  function render() {
+    applyFilters();
+    renderStats();
+    renderList();
+    syncMarkers();
+    checkStale();
+    saveState();
+  }
+
+  /* ---------- Resizable / collapsible list ---------- */
+  function initResizer() {
+    var bar = document.getElementById('dragBar');
+    var sheet = document.getElementById('sheet');
+    var dragging = false;
+
+    function setHeight(px) {
+      var max = window.innerHeight * 0.8;
+      var h = Math.max(0, Math.min(max, px));
+      document.documentElement.style.setProperty('--sheet-h', h + 'px');
+      state.sheetH = h + 'px';
+      map.invalidateSize();
+    }
+
+    bar.addEventListener('pointerdown', function (e) {
+      dragging = true;
+      bar.setPointerCapture(e.pointerId);
+    });
+    bar.addEventListener('pointermove', function (e) {
+      if (dragging) setHeight(window.innerHeight - e.clientY);
+    });
+    bar.addEventListener('pointerup', function (e) {
+      dragging = false;
+      try { bar.releasePointerCapture(e.pointerId); } catch (err) {}
+      saveState();
+    });
+
+    // Double-tap the handle to collapse / restore the list.
+    var lastTap = 0;
+    bar.addEventListener('click', function () {
+      var now = Date.now();
+      if (now - lastTap < 350) {
+        state.collapsed = !state.collapsed;
+        sheet.classList.toggle('collapsed', state.collapsed);
+        map.invalidateSize();
+        saveState();
+      }
+      lastTap = now;
+    });
+
+    if (state.sheetH) document.documentElement.style.setProperty('--sheet-h', state.sheetH);
+    sheet.classList.toggle('collapsed', !!state.collapsed);
+  }
+
+  /* ---------- Startup ---------- */
+  function applyStateToControls() {
+    document.getElementById('searchInput').value = state.search || '';
+    document.getElementById('completionFilter').value = state.completion;
+    document.getElementById('sortFilter').value = state.sort;
+  }
+
+  function setStatus() {
+    var pill = document.getElementById('statusPill');
+    if (!jobs.length) { pill.textContent = 'No data loaded'; return; }
+    var when = loadedAt
+      ? loadedAt.toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+      : '';
+    pill.textContent = jobs.length + ' jobs' + (when ? ' - loaded ' + when : '');
+  }
+
+  function init() {
+    document.getElementById('version').textContent = VERSION;
+    initMap();
+
+    document.getElementById('fileInput').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      readFile(file).then(function (parsed) {
+        jobs = parsed;                 // completedSet is intentionally NOT cleared:
+        fileLabel = file.name;         // IDs are ref-based, so "done" carries over.
+        loadedAt = new Date();
+        rebuildDropdowns();
+        applyStateToControls();
+        render();
+        fitToFilter();
+        setStatus();
+        toast('Loaded ' + jobs.length + ' jobs');
+      })['catch'](function (err) {
+        console.error(err);
+        toast(err.message || 'Could not read that file');
+      });
+    });
+
+    document.getElementById('searchInput').addEventListener('input', function (e) {
+      state.search = e.target.value; render();
+    });
+    document.getElementById('gangFilter').addEventListener('change', function (e) {
+      state.gang = e.target.value; rebuildDropdowns(); render(); fitToFilter();
+    });
+    document.getElementById('dateFilter').addEventListener('change', function (e) {
+      state.date = e.target.value; render(); fitToFilter();
+    });
+    document.getElementById('completionFilter').addEventListener('change', function (e) {
+      state.completion = e.target.value; render();
+    });
+    document.getElementById('sortFilter').addEventListener('change', function (e) {
+      state.sort = e.target.value; render();
+    });
+
+    document.getElementById('todayButton').addEventListener('click', function () {
+      var sel = document.getElementById('dateFilter');
+      var t = todayYmd();
+      var found = false;
+      for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === t) found = true;
+      if (found) {
+        sel.value = t; state.date = t; render(); fitToFilter();
+      } else {
+        toast('No jobs planned to start today');
+      }
+    });
+
+    document.getElementById('fitButton').addEventListener('click', fitToFilter);
+
+    document.getElementById('locateButton').addEventListener('click', function () {
+      if (!navigator.geolocation) { toast('GPS unavailable'); return; }
+      navigator.geolocation.getCurrentPosition(function (p) {
+        userLocation = { lat: p.coords.latitude, lng: p.coords.longitude };
+        L.circleMarker([userLocation.lat, userLocation.lng], {
+          radius:8, color:'#fff', fillColor:'#3d8bfd', fillOpacity:1, weight:2
+        }).addTo(map).bindPopup('You are here');
+        map.setView([userLocation.lat, userLocation.lng], 14);
+        render();
+      }, function () { toast('Unable to get your location'); });
+    });
+
+    initResizer();
+
+    if (restoreState()) {
+      rebuildDropdowns();
+      applyStateToControls();
+      render();
+      setStatus();
+    }
+  }
+
+  init();
   </script>
 </body>
 </html>
