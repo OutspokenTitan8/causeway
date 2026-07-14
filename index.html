@@ -73,9 +73,10 @@
     .job-action:disabled { background:var(--line); color:var(--mut); cursor:not-allowed; }
 
     /* ---------- Markers ---------- */
-    .job-marker { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:13px; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.45); position:relative; }
+    .job-marker { width:20px; height:20px; border-radius:50%; border:2.5px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.45); position:relative; }
+    .job-marker.selected { width:26px; height:26px; box-shadow:0 0 0 4px rgba(61,139,253,.55), 0 2px 6px rgba(0,0,0,.45); z-index:1000; }
     .job-marker.completed { background:#8b98a9; }
-    .job-marker.completed::before, .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:12px; height:2px; background:#fff; transform-origin:center; }
+    .job-marker.completed::before, .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:9px; height:2px; background:#fff; transform-origin:center; }
     .job-marker.completed::before { transform:translate(-50%,-50%) rotate(45deg); }
     .job-marker.completed::after { transform:translate(-50%,-50%) rotate(-45deg); }
     /* Clusters are deliberately NOT circles: a circle with a number always
@@ -129,7 +130,7 @@
         <span><i style="background:#f0546c"></i>Overdue</span>
         <span><i style="background:#d29922"></i>Due today</span>
         <span><i style="background:#2ea043"></i>Future</span>
-        <span><i style="background:#8b98a9;border-radius:3px"></i>Square = group</span>
+        <span><i style="background:#8b98a9;border-radius:3px"></i>Square = grouped jobs</span>
       </div>
     </div>
 
@@ -181,7 +182,7 @@
      It does not update Causeway.
      ========================================================= */
 
-  var VERSION = 'v2.0';
+  var VERSION = 'v2.2';
   var STORAGE_KEY = 'job-map-v2';
   var CLUSTER_OFF_AT_ZOOM = 14;              // individual pins at/above this zoom
   var URG = { over:'#f0546c', today:'#d29922', future:'#2ea043', none:'#8b98a9' };
@@ -449,11 +450,12 @@
 
   function markerIcon(job, done) {
     var color = done ? '#8b98a9' : urgencyColor(job.complete);
-    var cls = 'job-marker' + (done ? ' completed' : '');
-    var label = done ? '' : (job.displayNum || '');
+    var sel = (selectedJobId === job.id);
+    var cls = 'job-marker' + (done ? ' completed' : '') + (sel ? ' selected' : '');
+    var size = sel ? 26 : 20;
     return L.divIcon({
-      html: '<div class="' + cls + '" style="background:' + color + '">' + label + '</div>',
-      className: '', iconSize: [28,28], iconAnchor: [14,14]
+      html: '<div class="' + cls + '" style="background:' + color + '"></div>',
+      className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2]
     });
   }
 
@@ -717,11 +719,19 @@
     });
   }
 
+  // Icon-only repaint. Does NOT clear layers, so an open popup stays open.
+  function refreshMarkerIcons() {
+    filteredJobs.forEach(function (job) {
+      if (job.marker) job.marker.setIcon(markerIcon(job, completedSet.has(job.id)));
+    });
+  }
+
   function selectJob(id, panTo) {
     selectedJobId = id;
     var job = null;
     for (var i = 0; i < jobs.length; i++) if (jobs[i].id === id) { job = jobs[i]; break; }
     renderList();
+    refreshMarkerIcons();   // highlight the selected pin without closing its popup
     var row = document.querySelector('[data-id="' + id + '"]');
     if (row) row.scrollIntoView({ behavior:'smooth', block:'center' });
     if (job && panTo) openDetails(job);
