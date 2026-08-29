@@ -180,6 +180,13 @@
       font-size:18px; display:grid; place-items:center; cursor:pointer;
     }
     .fab.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+    /* While a job card is open it owns the screen. The zoom buttons and the
+       FABs would otherwise overlap it - Leaflet's control pane sits above the
+       popup pane - and the close button ends up behind the Locate button.
+       Pinch to zoom still works with the buttons hidden. */
+    .map-fabs, .leaflet-control-zoom { transition:opacity .15s; }
+    #mapPane.popup-open .map-fabs,
+    #mapPane.popup-open .leaflet-control-zoom { opacity:0; pointer-events:none; }
 
     /* ---------- List ---------- */
     .stats { display:flex; gap:8px; padding:10px 12px 0; flex-wrap:wrap; flex:none; padding-left:calc(12px + var(--sal)); padding-right:calc(12px + var(--sar)); }
@@ -245,14 +252,14 @@
     .me-arrow { position:absolute; left:50%; top:50%; width:0; height:0; margin:-22px 0 0 -7px; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:11px solid var(--accent); transform-origin:50% 22px; }
 
     /* ---------- Popup ---------- */
-    .leaflet-popup-content { margin:12px 14px; }
+    .leaflet-popup-content { margin:11px 13px; }
     .pp { min-width:220px; }
     .pp-head { font-size:14px; font-weight:700; color:#111; padding-bottom:6px; margin-bottom:7px; border-bottom:2px solid; display:flex; align-items:center; gap:8px; }
     .pp-n { color:#fff; border-radius:50%; width:22px; height:22px; font-size:12px; display:inline-flex; align-items:center; justify-content:center; flex:none; }
     .pp-addr { font-size:13px; font-weight:600; color:#111; margin-bottom:3px; }
     .pp-tags { font-size:11px; color:#666; margin-bottom:6px; }
-    .pp-desc { font-size:12px; line-height:1.45; color:#222; background:#f2f5f8; border-radius:6px; padding:7px 9px; margin-bottom:7px; }
-    .pp-meta { font-size:11px; color:#444; line-height:1.65; margin-bottom:7px; }
+    .pp-desc { font-size:12px; line-height:1.4; color:#222; background:#f2f5f8; border-radius:6px; padding:6px 8px; margin-bottom:6px; }
+    .pp-meta { font-size:11.5px; color:#333; line-height:1.5; margin-bottom:7px; }
     .pp-coords { font-size:11px; color:#555; font-family:ui-monospace,Menlo,monospace; margin-bottom:9px; }
     .pp-btns { display:flex; gap:6px; }
     .pp-btns button, .pp-btns a {
@@ -467,7 +474,7 @@
      will lose their "done" marks and loaded export.
      ========================================================= */
 
-  var VERSION = 'v2.5';
+  var VERSION = 'v2.6';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -845,6 +852,25 @@
     // else, so stop yanking the view back to them on the next GPS tick.
     map.on('dragstart', function () { if (followMode) setFollow(false); });
 
+    // Size the popup when it OPENS, not when it is bound.
+    // syncMarkers() runs from render(), which fires during startup while the
+    // Map tab is still display:none - and a hidden pane measures 0, so every
+    // popup was being pinned to the old 120px floor no matter how tall the
+    // screen actually was. That is why they all needed scrolling.
+    // Leaflet's _updateLayout reads options.maxHeight at layout time, so
+    // setting the options and calling update() re-applies them.
+    map.on('popupopen', function (e) {
+      var h = mapHeight(), w = mapWidth();
+      // Leave room for the pointer tip, the close button and a little margin.
+      e.popup.options.maxHeight = Math.max(160, h - 100);
+      e.popup.options.maxWidth  = Math.min(360, Math.max(240, w - 40));
+      e.popup.update();
+      document.getElementById('mapPane').classList.add('popup-open');
+    });
+    map.on('popupclose', function () {
+      document.getElementById('mapPane').classList.remove('popup-open');
+    });
+
     var kick = function () { map.invalidateSize(); };
     [0, 150, 400, 800].forEach(function (t) { setTimeout(kick, t); });
     window.addEventListener('resize', kick);
@@ -878,12 +904,15 @@
         job.marker.setIcon(markerIcon(job, done));
         job.marker.options.priority = priorityOf(job);
       }
+      // maxWidth/maxHeight here are placeholders only - they are recomputed
+      // in the popupopen handler, because at bind time the map pane may not
+      // be visible yet and a hidden pane measures zero. See initMap().
       job.marker.bindPopup(popupHtml(job), {
-        maxWidth: 300,
+        maxWidth: 320,
         keepInView: true,                       // never let the popup sit off-screen
         autoPan: true,
         autoPanPadding: [16, 16],
-        maxHeight: Math.max(120, mapHeight() - 90)  // scroll inside rather than overflow
+        maxHeight: 400
       });
       live.push(job.marker);
     });
@@ -892,7 +921,13 @@
 
   function mapHeight() {
     var el = document.getElementById('mapPane');
-    return el ? el.clientHeight : 400;
+    // A hidden pane reports 0; fall back to the window so callers never get a
+    // nonsense value while the Map tab is inactive.
+    return (el && el.clientHeight) ? el.clientHeight : (window.innerHeight || 400);
+  }
+  function mapWidth() {
+    var el = document.getElementById('mapPane');
+    return (el && el.clientWidth) ? el.clientWidth : (window.innerWidth || 320);
   }
 
   function openDetails(job) {
