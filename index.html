@@ -1,9 +1,17 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <!-- viewport-fit=cover is required for env(safe-area-inset-*) to report real
+       values on notched iPhones. user-scalable=no has been REMOVED: iOS has
+       ignored it since iOS 10, and combined with sub-16px inputs it left
+       operatives stuck zoomed in after tapping search. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f1419" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Job Map" />
   <title>Job Map</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
@@ -12,71 +20,215 @@
     :root {
       --bg:#0f1419; --panel:#1a2230; --line:#2a3547; --txt:#e6edf3; --mut:#8b98a9;
       --accent:#3d8bfd; --ok:#2ea043; --warn:#d29922; --err:#f0546c;
-      --sheet-h: 42vh;
+      /* Subtle fills. Defined as variables because a white-on-white tint is
+         invisible: rgba(255,255,255,.05) works on the dark ground only. */
+      --soft:rgba(255,255,255,.05); --soft2:rgba(255,255,255,.03);
+      --soft3:rgba(255,255,255,.02); --legend-bg:rgba(15,20,25,.9);
+      /* Safe areas: 0px fallback everywhere that doesn't support env(). */
+      --sat: env(safe-area-inset-top, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --sal: env(safe-area-inset-left, 0px);
+      --sar: env(safe-area-inset-right, 0px);
+      --tabbar-h: 58px;
+      /* Minimum comfortable touch target. Apple HIG 44pt, Material 48dp. */
+      --tap: 46px;
     }
+    /* Light theme. The urgency colours (red/amber/green) deliberately do NOT
+       change between themes - a gang learns "red = overdue" once, and it has
+       to mean the same thing on both. Only the chrome flips.
+       "Auto" follows the phone; explicit choices win over it. */
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg:#f2f5f8; --panel:#ffffff; --line:#d3dbe4; --txt:#111820; --mut:#57646f;
+        --accent:#1160d4; --ok:#1a7f37; --warn:#8a6100; --err:#c6303f;
+        --soft:rgba(0,0,0,.05); --soft2:rgba(0,0,0,.03);
+        --soft3:rgba(0,0,0,.02); --legend-bg:rgba(255,255,255,.94);
+      }
+    }
+    :root[data-theme="light"] {
+      --bg:#f2f5f8; --panel:#ffffff; --line:#d3dbe4; --txt:#111820; --mut:#57646f;
+      --accent:#1160d4; --ok:#1a7f37; --warn:#8a6100; --err:#c6303f;
+      --soft:rgba(0,0,0,.05); --soft2:rgba(0,0,0,.03);
+      --soft3:rgba(0,0,0,.02); --legend-bg:rgba(255,255,255,.94);
+    }
+
     * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-    html, body { margin:0; height:100%; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--txt); }
+    html, body {
+      margin:0; height:100%; overscroll-behavior:none;
+      font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:var(--bg); color:var(--txt);
+    }
     #app { display:flex; flex-direction:column; height:100vh; height:100dvh; }
 
     /* ---------- Header ---------- */
-    header { padding:10px 12px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-    header h1 { margin:0; font-size:17px; font-weight:700; }
-    .version { font-size:11px; color:var(--mut); font-weight:600; }
-    .header-right { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .pill { padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.05); font-size:12px; color:var(--mut); }
-    .pill.alert { border-color:var(--err); color:#fff; background:rgba(240,84,108,.22); font-weight:700; }
-    .button, .file-button { border-radius:10px; border:1px solid var(--line); padding:9px 13px; background:var(--bg); color:var(--txt); font-size:13px; font-weight:700; cursor:pointer; }
-    .file-button { background:var(--accent); border-color:var(--accent); color:#fff; }
+    header {
+      padding:calc(10px + var(--sat)) calc(12px + var(--sar)) 10px calc(12px + var(--sal));
+      background:var(--panel); border-bottom:1px solid var(--line);
+      display:flex; align-items:center; gap:8px; flex:none;
+      /* Single row, but everything except the Load button is allowed to shrink.
+         Without min-width:0 the pills refuse to compress and push the button
+         off the right edge of a 390px iPhone. */
+      flex-wrap:nowrap; min-width:0;
+    }
+    header h1 { margin:0; font-size:17px; font-weight:700; white-space:nowrap; flex:none; }
+    .version { font-size:11px; color:var(--mut); font-weight:600; flex:none; }
+    .header-right { margin-left:auto; display:flex; gap:8px; align-items:center; min-width:0; }
+    .pill {
+      padding:6px 10px; border-radius:999px; border:1px solid var(--line);
+      background:var(--soft); font-size:12px; color:var(--mut);
+      white-space:nowrap; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    }
+    /* The overdue count is the one thing that must never be truncated away. */
+    .pill.alert { border-color:var(--err); color:#fff; background:rgba(240,84,108,.22); font-weight:700; flex:none; }
+    /* Narrow phones: drop the decorations before the controls. */
+    @media (max-width:400px) {
+      .version { display:none; }
+      header h1 { font-size:16px; }
+    }
+    @media (max-width:340px) { #statusPill { display:none; } }
+    .button, .file-button {
+      border-radius:10px; border:1px solid var(--line); padding:0 14px;
+      min-height:var(--tap); background:var(--bg); color:var(--txt);
+      font-size:14px; font-weight:700; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .file-button { background:var(--accent); border-color:var(--accent); color:#fff; white-space:nowrap; }
 
     /* Stale-data banner */
-    .stale-bar { display:none; padding:9px 12px; background:rgba(240,84,108,.16); border-bottom:1px solid var(--err); color:#ffd9e0; font-size:12px; font-weight:600; }
+    .stale-bar { display:none; padding:9px 12px; background:rgba(240,84,108,.16); border-bottom:1px solid var(--err); color:#ffd9e0; font-size:12px; font-weight:600; flex:none; }
     .stale-bar.show { display:block; }
 
+    /* ---------- Search ----------
+       Lives on the List tab, NOT in Settings: it is used constantly, and
+       putting it behind a tab switch would mean two taps per search. */
+    .searchbar { display:flex; padding:8px calc(12px + var(--sar)) 0 calc(12px + var(--sal)); flex:none; }
+    .searchbar input {
+      flex:1; min-width:0; background:var(--bg); border:1px solid var(--line);
+      border-radius:10px; color:var(--txt); padding:0 12px; min-height:var(--tap);
+      /* 16px exactly: anything smaller makes iOS zoom the page on focus. */
+      font-size:16px;
+    }
+    .searchbar input::placeholder { color:var(--mut); }
+
+    /* ---------- Settings pane ---------- */
+    .settings {
+      overflow-y:auto; -webkit-overflow-scrolling:touch; flex:1;
+      padding:14px calc(12px + var(--sar)) calc(20px + var(--sab)) calc(12px + var(--sal));
+      display:grid; gap:16px; align-content:start;
+    }
+    .set-group { display:grid; gap:9px; }
+    .set-group > h2 {
+      margin:0; font-size:12px; font-weight:800; letter-spacing:.6px;
+      text-transform:uppercase; color:var(--mut);
+    }
+    .set-field { display:grid; gap:5px; }
+    .set-field label { font-size:13px; color:var(--mut); font-weight:600; }
+    .set-field select {
+      width:100%; background:var(--bg); border:1px solid var(--line);
+      border-radius:10px; color:var(--txt); padding:0 12px; min-height:var(--tap);
+      font-size:16px;
+    }
+    .set-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .set-actions .button { flex:1; min-width:120px; }
+    .set-note {
+      font-size:12px; line-height:1.55; color:var(--mut);
+      background:var(--soft2); border:1px solid var(--line);
+      border-radius:10px; padding:11px 12px;
+    }
+    .set-note b { color:var(--txt); }
+    /* Boolean settings get a real switch rather than a select - it reads as
+       on/off at a glance and is one tap instead of two. */
+    .set-toggle {
+      display:flex; align-items:center; gap:12px; min-height:var(--tap);
+      cursor:pointer; user-select:none;
+    }
+    .set-toggle input { position:absolute; opacity:0; width:0; height:0; }
+    .set-toggle .track {
+      flex:none; width:52px; height:31px; border-radius:999px;
+      background:var(--line); position:relative; transition:background .15s;
+    }
+    .set-toggle .track::after {
+      content:''; position:absolute; top:3px; left:3px; width:25px; height:25px;
+      border-radius:50%; background:#fff; transition:transform .15s;
+      box-shadow:0 1px 3px rgba(0,0,0,.4);
+    }
+    .set-toggle input:checked + .track { background:var(--accent); }
+    .set-toggle input:checked + .track::after { transform:translateX(21px); }
+    .set-toggle input:focus-visible + .track { outline:2px solid var(--accent); outline-offset:2px; }
+    .set-toggle .lbl { font-size:14px; font-weight:600; }
+    .set-toggle .sub { display:block; font-size:12px; color:var(--mut); font-weight:400; margin-top:2px; }
+    .set-toggle.unavailable { opacity:.5; pointer-events:none; }
+
+    /* ---------- Panes ---------- */
+    main { flex:1; position:relative; min-height:0; }
+    .pane { position:absolute; inset:0; display:none; flex-direction:column; }
+    .pane.active { display:flex; }
+
     /* ---------- Map ---------- */
-    .map-container { position:relative; flex:1; min-height:120px; }
     #map { width:100%; height:100%; }
-    .legend { position:absolute; right:10px; bottom:10px; z-index:500; background:rgba(15,20,25,.9); border:1px solid var(--line); border-radius:10px; padding:8px 10px; display:grid; gap:5px; font-size:11px; }
+    .legend {
+      position:absolute; right:calc(10px + var(--sar)); bottom:calc(26px + var(--sab)); z-index:500;
+      background:var(--legend-bg); border:1px solid var(--line); border-radius:10px;
+      padding:8px 10px; display:grid; gap:5px; font-size:11px; pointer-events:none;
+    }
     .legend span { display:flex; align-items:center; gap:7px; }
     .legend i { width:11px; height:11px; border-radius:50%; display:inline-block; border:1px solid #fff; }
+    .map-fabs { position:absolute; right:calc(10px + var(--sar)); top:10px; z-index:500; display:grid; gap:8px; }
+    .fab {
+      width:var(--tap); height:var(--tap); border-radius:12px;
+      background:var(--panel); border:1px solid var(--line); color:var(--txt);
+      font-size:18px; display:grid; place-items:center; cursor:pointer;
+    }
+    .fab.on { background:var(--accent); border-color:var(--accent); color:#fff; }
 
-    /* ---------- Drag handle ---------- */
-    .drag-bar { height:20px; background:var(--panel); border-top:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:ns-resize; touch-action:none; flex:none; }
-    .drag-bar::before { content:''; width:44px; height:4px; border-radius:2px; background:var(--line); }
-    .drag-bar:active::before { background:var(--accent); }
-
-    /* ---------- Sheet ---------- */
-    .sheet { background:var(--panel); height:var(--sheet-h); display:flex; flex-direction:column; flex:none; overflow:hidden; }
-    .sheet.collapsed { height:0; }
-    .controls { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); flex:none; }
-    .controls input, .controls select { min-width:120px; flex:1; background:var(--bg); border:1px solid var(--line); border-radius:10px; color:var(--txt); padding:10px 12px; font-size:13px; }
-    .controls input::placeholder { color:var(--mut); }
-    .stats { display:flex; gap:8px; padding:8px 12px 0; flex-wrap:wrap; flex:none; }
-    .stat { background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:10px; padding:7px 11px; font-size:12px; color:var(--mut); }
+    /* ---------- List ---------- */
+    .stats { display:flex; gap:8px; padding:10px 12px 0; flex-wrap:wrap; flex:none; padding-left:calc(12px + var(--sal)); padding-right:calc(12px + var(--sar)); }
+    .stat { background:var(--soft2); border:1px solid var(--line); border-radius:10px; padding:7px 11px; font-size:12px; color:var(--mut); }
     .stat b { display:block; font-size:16px; margin-top:2px; color:var(--txt); }
-    .list { overflow-y:auto; padding:10px 12px 16px; display:grid; gap:9px; flex:1; }
+    .list {
+      overflow-y:auto; -webkit-overflow-scrolling:touch; flex:1;
+      padding:10px calc(12px + var(--sar)) calc(16px + var(--sab)) calc(12px + var(--sal));
+      display:grid; gap:9px; align-content:start;
+    }
     .empty { padding:22px; text-align:center; color:var(--mut); border:1px dashed var(--line); border-radius:12px; }
 
     /* ---------- Job rows ---------- */
-    .job-row { display:grid; grid-template-columns:32px 1fr; gap:10px; padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,.05); background:rgba(255,255,255,.02); }
+    .job-row { display:grid; grid-template-columns:36px 1fr; gap:10px; padding:12px; border-radius:12px; border:1px solid var(--soft); background:var(--soft3); }
     .job-row.completed { opacity:.6; background:rgba(46,160,67,.08); }
     .job-row.completed .job-ref { text-decoration:line-through; color:var(--mut); }
     .job-row.selected { border-color:rgba(61,139,253,.65); box-shadow:0 0 0 2px rgba(61,139,253,.25); }
-    .job-pin { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; border:2px solid #fff; }
-    .job-ref { font-size:14px; font-weight:700; word-break:break-word; }
-    .job-addr { font-size:12px; color:var(--mut); margin-top:5px; word-break:break-word; }
+    .job-pin { width:36px; height:36px; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:700; font-size:14px; border:2px solid #fff; }
+    .job-tap { cursor:pointer; }
+    .job-ref { font-size:15px; font-weight:700; word-break:break-word; }
+    .job-addr { font-size:13px; color:var(--mut); margin-top:5px; word-break:break-word; }
     .job-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-    .chip { font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+    .chip { font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+    .chip.dist { border-color:var(--accent); color:#9dc4ff; }
     .job-actions { display:flex; gap:7px; margin-top:10px; }
-    .job-action { flex:1; border:none; border-radius:10px; padding:9px; color:#fff; font-weight:700; font-size:12px; cursor:pointer; }
+    .job-action {
+      flex:1; border:none; border-radius:10px; min-height:var(--tap); padding:0 8px;
+      color:#fff; font-weight:700; font-size:13px; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center;
+      text-decoration:none; font-family:inherit;
+    }
     .job-action.nav { background:var(--ok); }
     .job-action.done { background:var(--accent); }
-    .job-action:disabled { background:var(--line); color:var(--mut); cursor:not-allowed; }
+    /* Own colour pair rather than inheriting the white-on-accent of its
+       siblings: --line is dark in the dark theme but pale in the light one,
+       so a white icon on it disappears in daylight. */
+    .job-action.pin {
+      background:var(--soft); color:var(--txt); border:1px solid var(--line);
+      flex:0 0 var(--tap); font-size:17px;
+    }
+    .job-action.disabled, .job-action:disabled { background:var(--line); color:var(--mut); pointer-events:none; }
 
     /* ---------- Markers ---------- */
-    .job-marker { width:20px; height:20px; border-radius:50%; border:2.5px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.45); position:relative; }
-    .job-marker.selected { width:26px; height:26px; box-shadow:0 0 0 4px rgba(61,139,253,.55), 0 2px 6px rgba(0,0,0,.45); z-index:1000; }
+    /* 28px, up from 20px: a 20px pin is well under both platforms' minimum
+       touch target and was hard to hit in gloves. */
+    .job-marker { width:28px; height:28px; border-radius:50%; border:3px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.45); position:relative; }
+    .job-marker.selected { width:34px; height:34px; box-shadow:0 0 0 4px rgba(61,139,253,.55), 0 2px 6px rgba(0,0,0,.45); z-index:1000; }
     .job-marker.completed { background:#8b98a9; }
-    .job-marker.completed::before, .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:9px; height:2px; background:#fff; transform-origin:center; }
+    .job-marker.completed::before, .job-marker.completed::after { content:''; position:absolute; left:50%; top:50%; width:11px; height:2px; background:#fff; transform-origin:center; }
     .job-marker.completed::before { transform:translate(-50%,-50%) rotate(45deg); }
     .job-marker.completed::after { transform:translate(-50%,-50%) rotate(-45deg); }
     /* Clusters are deliberately NOT circles: a circle with a number always
@@ -85,6 +237,12 @@
     .marker-cluster::before { content:''; position:absolute; top:-5px; left:5px; right:5px; height:5px; border-radius:6px 6px 0 0; background:inherit; opacity:.55; border:2px solid #fff; border-bottom:none; box-sizing:border-box; }
     .marker-cluster b { font-size:16px; font-weight:800; line-height:1; }
     .marker-cluster i { font-size:8px; font-style:normal; letter-spacing:.5px; opacity:.9; margin-top:1px; text-transform:uppercase; }
+
+    /* Own-position marker. The arrow only renders when the GPS reports a
+       heading, which it does not do while stationary. */
+    .me-dot { width:20px; height:20px; border-radius:50%; background:var(--accent); border:3px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.35); }
+    .me-wrap { position:relative; width:20px; height:20px; }
+    .me-arrow { position:absolute; left:50%; top:50%; width:0; height:0; margin:-22px 0 0 -7px; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:11px solid var(--accent); transform-origin:50% 22px; }
 
     /* ---------- Popup ---------- */
     .leaflet-popup-content { margin:12px 14px; }
@@ -97,17 +255,51 @@
     .pp-meta { font-size:11px; color:#444; line-height:1.65; margin-bottom:7px; }
     .pp-coords { font-size:11px; color:#555; font-family:ui-monospace,Menlo,monospace; margin-bottom:9px; }
     .pp-btns { display:flex; gap:6px; }
-    .pp-btns button { flex:1; border:none; border-radius:8px; padding:9px; font-size:12px; font-weight:700; color:#fff; cursor:pointer; }
+    .pp-btns button, .pp-btns a {
+      flex:1; border:none; border-radius:8px; min-height:44px; padding:0 8px;
+      font-size:12px; font-weight:700; color:#fff; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center;
+      text-decoration:none; font-family:inherit;
+    }
     .pp-copy { background:#3d8bfd; }
     .pp-nav { background:#2ea043; }
 
-    .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:11px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; max-width:90%; text-align:center; }
+    .toast { position:fixed; left:50%; bottom:calc(var(--sab) + 20px); transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:11px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; max-width:90%; text-align:center; }
 
-    /* Detail modal - used when the map pane is too short to show a popup */
+    /* ---------- Tab bar (top) ---------- */
+    .tabbar {
+      flex:none; display:grid; grid-template-columns:repeat(3, 1fr);
+      background:var(--panel); border-bottom:1px solid var(--line);
+      padding-left:var(--sal); padding-right:var(--sar);
+    }
+    .tab {
+      height:var(--tabbar-h); border:none; background:none; color:var(--mut);
+      font-family:inherit; font-size:12px; font-weight:700; cursor:pointer;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      /* Underline the active tab, which is the convention when tabs sit at
+         the top rather than the bottom. */
+      border-bottom:3px solid transparent; margin-bottom:-1px; position:relative;
+    }
+    .tab svg { width:22px; height:22px; fill:currentColor; }
+    .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+    .tab .badge { font-size:11px; font-weight:800; opacity:.85; }
+    /* Count of non-default filters, so a gang can see at a glance that the
+       list is filtered without opening Settings. */
+    .tab .dot {
+      position:absolute; top:7px; right:50%; margin-right:-24px;
+      background:var(--accent); color:#fff; border-radius:999px;
+      min-width:18px; height:18px; font-size:11px; font-weight:800;
+      display:grid; place-items:center; padding:0 5px;
+    }
+    /* display:grid above beats the UA stylesheet's [hidden]{display:none},
+       so the badge has to be hidden explicitly or it shows with 0 filters. */
+    .tab .dot[hidden] { display:none; }
+
+    /* Detail modal */
     .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:3000; padding:16px; }
     .modal.open { display:flex; }
     .modal-card { background:#fff; border-radius:14px; width:100%; max-width:420px; max-height:80vh; overflow-y:auto; padding:16px; position:relative; }
-    .modal-close { position:absolute; top:8px; right:10px; background:none; border:none; font-size:24px; line-height:1; color:#888; cursor:pointer; padding:4px 8px; }
+    .modal-close { position:absolute; top:6px; right:8px; background:none; border:none; font-size:26px; line-height:1; color:#888; cursor:pointer; width:44px; height:44px; }
   </style>
 </head>
 <body>
@@ -117,51 +309,138 @@
       <span class="version" id="version"></span>
       <div class="header-right">
         <span class="pill alert" id="overduePill" hidden></span>
-        <span class="pill" id="statusPill">No data loaded</span>
-        <label class="file-button">Load file<input id="fileInput" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+        <span class="pill" id="statusPill">No data</span>
+        <label class="file-button">Load file<input id="fileInput" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden></label>
       </div>
     </header>
 
     <div class="stale-bar" id="staleBar"></div>
 
-    <div class="map-container">
-      <div id="map"></div>
-      <div class="legend">
-        <span><i style="background:#f0546c"></i>Overdue</span>
-        <span><i style="background:#d29922"></i>Due today</span>
-        <span><i style="background:#2ea043"></i>Future</span>
-        <span><i style="background:#8b98a9;border-radius:3px"></i>Square = grouped jobs</span>
-      </div>
-    </div>
+    <nav class="tabbar">
+      <button class="tab active" id="tabList" data-pane="listPane">
+        <svg viewBox="0 0 24 24"><path d="M3 5h2v2H3V5zm4 0h14v2H7V5zM3 11h2v2H3v-2zm4 0h14v2H7v-2zM3 17h2v2H3v-2zm4 0h14v2H7v-2z"/></svg>
+        <span>List <span class="badge" id="listBadge"></span></span>
+      </button>
+      <button class="tab" id="tabMap" data-pane="mapPane">
+        <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+        <span>Map</span>
+      </button>
+      <button class="tab" id="tabSettings" data-pane="settingsPane">
+        <svg viewBox="0 0 24 24"><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2.1-1.6a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.3 7.3 0 0 0-1.7-1l-.4-2.6a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.6a7.3 7.3 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.6 11a7.8 7.8 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.6l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.3 7.3 0 0 0 1.7 1l.4 2.6a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.6a7.3 7.3 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6L19.4 13zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
+        <span>Settings</span>
+        <span class="dot" id="filterCount" hidden></span>
+      </button>
+    </nav>
 
-    <div class="drag-bar" id="dragBar" title="Drag to resize - double-tap to collapse"></div>
+    <main>
+      <section class="pane" id="listPane">
+        <div class="searchbar">
+          <input id="searchInput" type="search" placeholder="Search ref, street, description" />
+        </div>
+        <div class="stats" id="statsPanel"></div>
+        <div class="list" id="jobList"><div class="empty">Load the daily export to see jobs on the map.</div></div>
+      </section>
 
-    <div class="sheet" id="sheet">
-      <div class="controls">
-        <input id="searchInput" type="search" placeholder="Search ref, street, description" />
-        <select id="gangFilter"><option value="__all">All gangs</option></select>
-        <select id="dateFilter"><option value="__all">All planned dates</option></select>
-        <select id="completionFilter">
-          <option value="active">Active only</option>
-          <option value="__all">All jobs</option>
-          <option value="completed">Completed only</option>
-        </select>
-        <select id="sortFilter">
-          <option value="spreadsheet">Spreadsheet order</option>
-          <option value="duedate">Completion date</option>
-          <option value="planned">Planned start</option>
-          <option value="ref">Job reference</option>
-          <option value="addr">Address</option>
-          <option value="distance">Nearest first</option>
-        </select>
-        <button class="button" id="todayButton">Today</button>
-        <button class="button" id="fitButton">Fit</button>
-        <button class="button" id="locateButton">Locate</button>
-      </div>
-      <div class="stats" id="statsPanel"></div>
-      <div class="list" id="jobList"><div class="empty">Load the daily export to see jobs on the map.</div></div>
-    </div>
+      <section class="pane" id="mapPane">
+        <div id="map"></div>
+        <div class="map-fabs">
+          <button class="fab" id="followButton" title="Follow my location" aria-label="Follow my location">&#9678;</button>
+          <button class="fab" id="fitButton" title="Fit all jobs" aria-label="Fit all jobs">&#8862;</button>
+        </div>
+        <div class="legend">
+          <span><i style="background:#f0546c"></i>Overdue</span>
+          <span><i style="background:#d29922"></i>Due today</span>
+          <span><i style="background:#2ea043"></i>Future</span>
+          <span><i style="background:#8b98a9;border-radius:3px"></i>Square = grouped jobs</span>
+        </div>
+      </section>
+
+      <section class="pane" id="settingsPane">
+        <div class="settings">
+          <div class="set-group">
+            <h2>Filter</h2>
+            <div class="set-field">
+              <label for="gangFilter">Gang</label>
+              <select id="gangFilter"><option value="__all">All gangs</option></select>
+            </div>
+            <div class="set-field">
+              <label for="dateFilter">Planned start date</label>
+              <select id="dateFilter"><option value="__all">All planned dates</option></select>
+            </div>
+            <div class="set-field">
+              <label for="completionFilter">Show</label>
+              <select id="completionFilter">
+                <option value="active">Active only</option>
+                <option value="__all">All jobs</option>
+                <option value="completed">Completed only</option>
+              </select>
+            </div>
+            <div class="set-actions">
+              <button class="button" id="todayButton">Today only</button>
+              <button class="button" id="clearButton">Clear filters</button>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <h2>Order the list</h2>
+            <div class="set-field">
+              <label for="sortFilter">Sort by</label>
+              <select id="sortFilter">
+                <option value="urgency">Most urgent first</option>
+                <option value="duedate">Due date &amp; time</option>
+                <option value="planned">Scheduled date &amp; time</option>
+                <option value="distance">Nearest first</option>
+                <option value="addr">Street (groups same road)</option>
+                <option value="ref">Job reference</option>
+                <option value="spreadsheet">Spreadsheet order</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <h2>Display</h2>
+            <div class="set-field">
+              <label for="themeSelect">Theme</label>
+              <select id="themeSelect">
+                <option value="auto">Auto (follow phone)</option>
+                <option value="light">Light &ndash; daylight</option>
+                <option value="dark">Dark &ndash; night &amp; cab</option>
+              </select>
+            </div>
+            <div class="set-field">
+              <label for="unitsSelect">Distances in</label>
+              <select id="unitsSelect">
+                <option value="metric">Metres and kilometres</option>
+                <option value="imperial">Yards and miles</option>
+              </select>
+            </div>
+            <label class="set-toggle" id="awakeRow">
+              <input type="checkbox" id="awakeToggle" />
+              <span class="track"></span>
+              <span class="lbl">Keep screen awake
+                <span class="sub" id="awakeSub">Stops the phone sleeping while the app is open</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="set-group">
+            <h2>This device</h2>
+            <div class="set-note" id="dataNote"></div>
+            <div class="set-note">
+              <b>Mark done is stored on this phone only.</b> It does not update
+              Causeway, and another phone will not see it.
+            </div>
+            <div class="set-note" id="iosNote" hidden>
+              <b>iPhone: add this page to your Home Screen.</b> Safari deletes
+              saved data after seven days otherwise, which would clear your
+              loaded jobs and every "done" mark. Share &rarr; Add to Home Screen.
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
+
   <div class="toast" id="toast"></div>
 
   <div class="modal" id="detailModal">
@@ -180,12 +459,103 @@
      Reads the daily Causeway K01 export (.xlsx).
      NOTE: "Mark done" is stored on THIS PHONE ONLY.
      It does not update Causeway.
+
+     iOS WARNING: WebKit deletes all script-writeable storage
+     (localStorage included) after seven days of Safari use
+     without interaction on the site. Home-screen web apps are
+     exempt, so iPhone users should Add to Home Screen or they
+     will lose their "done" marks and loaded export.
      ========================================================= */
 
-  var VERSION = 'v2.2';
+  var VERSION = 'v2.5';
   var STORAGE_KEY = 'job-map-v2';
+
+  /* ---------- Basemap ----------
+     CARTO began requiring an API key for their RASTER basemap endpoint in
+     Aug 2026. Without one the tiles still load but carry a repeated
+     "API KEY REQUIRED" watermark.
+
+     A key is free: no CARTO account, no approval queue, 5 million tile
+     requests a month, emailed straight back from
+     https://carto.com/basemaps/apikey/ . Conditions are that the CARTO and
+     OpenStreetMap attribution stays visible, and the key is not shared with
+     unrelated projects.
+
+     Paste the key here and the map goes back to the Voyager style the gangs
+     already know. Leave it empty and we fall back to standard OpenStreetMap
+     tiles, which need no key at all - so the map NEVER shows a watermark and
+     never depends on someone remembering to renew anything. */
+  var CARTO_KEY = '';   // <-- paste the emailed key between the quotes
   var CLUSTER_OFF_AT_ZOOM = 14;              // individual pins at/above this zoom
   var URG = { over:'#f0546c', today:'#d29922', future:'#2ea043', none:'#8b98a9' };
+
+  /* ---------- Theme ----------
+     THEME_KEY is a tiny separate key purely so the theme can be applied at
+     boot without parsing the whole saved job list. state.theme stays the
+     source of truth; this mirrors it. */
+  var THEME_KEY = 'job-map-theme';
+  function applyTheme() {
+    var t = state.theme || 'auto';
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+
+    // Keep the browser's own chrome (status bar, tab colour) in step.
+    var dark = t === 'dark' ||
+      (t === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', dark ? '#0f1419' : '#ffffff');
+
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* private mode */ }
+  }
+  // Boot-time application, before init() has read the saved state.
+  (function () {
+    try {
+      var t = localStorage.getItem(THEME_KEY);
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* private mode - fall through to auto */ }
+  })();
+  // A system theme change should follow through while "Auto" is selected.
+  if (window.matchMedia) {
+    try {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+        if ((state.theme || 'auto') === 'auto') applyTheme();
+      });
+    } catch (e) { /* Safari < 14 has no addEventListener here */ }
+  }
+
+  /* ---------- Screen wake lock ----------
+     Baseline since March 2025, so current handsets have it and older ones
+     simply do not - hence the capability check rather than a version test.
+     The lock is dropped whenever the page is hidden and must be re-taken on
+     return, which is what the visibilitychange handler in init() does. */
+  var wakeLock = null;
+  var WAKE_SUPPORTED = ('wakeLock' in navigator);
+  function applyWakeLock() {
+    if (!WAKE_SUPPORTED) return;
+    if (state.keepAwake && !document.hidden) {
+      if (wakeLock) return;
+      navigator.wakeLock.request('screen').then(function (wl) {
+        wakeLock = wl;
+        wl.addEventListener('release', function () { wakeLock = null; });
+      })['catch'](function () {
+        // Denied, or refused on low battery. Not worth a toast on every retry.
+        wakeLock = null;
+      });
+    } else if (wakeLock) {
+      try { wakeLock.release(); } catch (e) {}
+      wakeLock = null;
+    }
+  }
+
+  /* ---------- Platform ----------
+     Used only to pick a maps URL. iPadOS 13+ reports itself as MacIntel, so
+     touch points are what actually separate an iPad from a desktop Mac. */
+  var IS_IOS = (function () {
+    var ua = navigator.userAgent || '';
+    if (/iPad|iPhone|iPod/.test(ua)) return true;
+    return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  })();
+  var IS_ANDROID = /Android/.test(navigator.userAgent || '');
 
   /* ---------- Column config (spreadsheet letters) ----------
      If the export layout ever shifts, change these letters.  */
@@ -223,7 +593,12 @@
   var map, markerCluster;
   var jobs = [], filteredJobs = [], completedSet = new Set(), userLocation = null;
   var selectedJobId = null, fileLabel = '', loadedAt = null;
-  var state = { search:'', gang:'__all', date:'__all', completion:'active', sort:'spreadsheet', sheetH:'', collapsed:false };
+  var state = { search:'', gang:'__all', date:'__all', completion:'active', sort:'urgency', tab:'listPane',
+               theme:'auto', units:'metric', keepAwake:false };
+
+  /* Live location */
+  var geoWatchId = null, meMarker = null, meCircle = null, followMode = false;
+  var lastSortPos = null;
 
   /* ---------- Utilities ---------- */
   function colIndex(letter) {
@@ -250,6 +625,15 @@
   }
   function dateFromYmd(s) { var p = String(s).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
   function nice(d) { return d ? d.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' }) : ''; }
+  // Shows the clock time too, but only when the export actually carries one.
+  // A date-only cell parses to local midnight, which is not a real appointment.
+  function hasTime(d) { return !!d && (d.getHours() || d.getMinutes()); }
+  function niceDT(d) {
+    if (!d) return '';
+    return nice(d) + (hasTime(d)
+      ? ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })
+      : '');
+  }
   function todayYmd() { return ymd(new Date()); }
   function midnight(d) { var x = new Date(d); x.setHours(0,0,0,0); return x; }
   function daysFromToday(d) { return Math.round((midnight(d) - midnight(new Date())) / 86400000); }
@@ -263,7 +647,7 @@
     if (!d) return 'No completion date';
     var diff = daysFromToday(d);
     if (diff < 0) return Math.abs(diff) + 'd overdue';
-    if (diff === 0) return 'Due today';
+    if (diff === 0) return 'Due today' + (hasTime(d) ? ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '');
     return 'Due in ' + diff + 'd';
   }
   function priorityOf(job) {
@@ -415,10 +799,25 @@
   /* ---------- Map ---------- */
   function initMap() {
     map = L.map('map', { zoomControl:true }).setView([52.057, -2.70], 12);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom:20, subdomains:'abcd', crossOrigin:true,
-      attribution:'&copy; OpenStreetMap &copy; CARTO'
-    }).addTo(map);
+
+    if (CARTO_KEY) {
+      // Documented raster endpoint. Note there is no {s} subdomain in CARTO's
+      // current form - subdomain sharding stopped helping once browsers moved
+      // to HTTP/2. {r} is Leaflet's retina suffix, which CARTO serves.
+      L.tileLayer('https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=' + CARTO_KEY, {
+        maxZoom:20, crossOrigin:true,
+        attribution:'&copy; OpenStreetMap contributors &copy; CARTO'
+      }).addTo(map);
+    } else {
+      // OSM's own tiles: free, no key, and their usage policy permits
+      // third-party apps. It is a best-effort service with no SLA, and they
+      // only serve to zoom 19 - maxNativeZoom lets Leaflet upscale to 20
+      // rather than request tiles that would 404.
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom:20, maxNativeZoom:19, crossOrigin:true,
+        attribution:'&copy; OpenStreetMap contributors'
+      }).addTo(map);
+    }
 
     markerCluster = L.markerClusterGroup({
       chunkedLoading: true,
@@ -442,17 +841,22 @@
     });
     map.addLayer(markerCluster);
 
+    // Dragging the map by hand means the operative wants to look somewhere
+    // else, so stop yanking the view back to them on the next GPS tick.
+    map.on('dragstart', function () { if (followMode) setFollow(false); });
+
     var kick = function () { map.invalidateSize(); };
     [0, 150, 400, 800].forEach(function (t) { setTimeout(kick, t); });
     window.addEventListener('resize', kick);
-    if (window.ResizeObserver) new ResizeObserver(kick).observe(document.querySelector('.map-container'));
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', kick);
+    if (window.ResizeObserver) new ResizeObserver(kick).observe(document.getElementById('mapPane'));
   }
 
   function markerIcon(job, done) {
     var color = done ? '#8b98a9' : urgencyColor(job.complete);
     var sel = (selectedJobId === job.id);
     var cls = 'job-marker' + (done ? ' completed' : '') + (sel ? ' selected' : '');
-    var size = sel ? 26 : 20;
+    var size = sel ? 34 : 28;
     return L.divIcon({
       html: '<div class="' + cls + '" style="background:' + color + '"></div>',
       className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2]
@@ -487,23 +891,29 @@
   }
 
   function mapHeight() {
-    var el = document.querySelector('.map-container');
+    var el = document.getElementById('mapPane');
     return el ? el.clientHeight : 400;
   }
 
-  // If the map pane is too short, a Leaflet popup can't fit and Leaflet ends up
-  // panning the marker out of view. Below this height, show a modal card instead.
-  var MIN_HEIGHT_FOR_POPUP = 300;
-
   function openDetails(job) {
-    if (job.lat == null) return;
-    if (mapHeight() >= MIN_HEIGHT_FOR_POPUP && job.marker) {
-      map.setView([job.lat, job.lng], Math.max(map.getZoom(), CLUSTER_OFF_AT_ZOOM));
-      markerCluster.zoomToShowLayer(job.marker, function () { job.marker.openPopup(); });
-    } else {
+    if (job.lat == null) {
+      // No coordinates, so there is nothing to show on the map: card only.
       document.getElementById('modalBody').innerHTML = popupHtml(job);
       document.getElementById('detailModal').classList.add('open');
+      return;
     }
+    showTab('mapPane');
+    // Leaflet needs a real size before it can pan; the pane has only just
+    // become visible, so let layout settle first.
+    setTimeout(function () {
+      map.invalidateSize();
+      map.setView([job.lat, job.lng], Math.max(map.getZoom(), CLUSTER_OFF_AT_ZOOM));
+      if (job.marker) markerCluster.zoomToShowLayer(job.marker, function () { job.marker.openPopup(); });
+    }, 60);
+  }
+  function openCard(job) {
+    document.getElementById('modalBody').innerHTML = popupHtml(job);
+    document.getElementById('detailModal').classList.add('open');
   }
   function closeDetails() {
     document.getElementById('detailModal').classList.remove('open');
@@ -513,9 +923,31 @@
   function fitToFilter() {
     var pts = [];
     filteredJobs.forEach(function (j) { if (j.lat != null) pts.push([j.lat, j.lng]); });
-    if (!pts.length) return;
+    if (!pts.length) { toast('No jobs with coordinates to fit'); return; }
     map.fitBounds(L.latLngBounds(pts).pad(0.18), { maxZoom: 15 });
   }
+
+  /* ---------- Navigation links ----------
+     Built as real <a href> values rather than window.open, so they are never
+     blocked as popups and always count as a direct user gesture.
+
+     Android: the documented geo: URI. Not http(s), so link rewriters such as
+       Mimecast leave it alone - which is why it was chosen originally.
+     iOS: Apple documents NO maps: scheme. Per Apple's URL Scheme Reference,
+       "map links are specified as regular http links and are opened either in
+       Safari or the Maps app on the target platform". geo: does nothing at all
+       on iOS, which is why the button appeared dead on iPhones.
+     Anything else: the cross-platform Google Maps URL (api=1). */
+  function navUrl(job) {
+    if (job.lat == null || job.lng == null) return '';
+    var label = encodeURIComponent(job.ref || 'Job');
+    if (IS_ANDROID) return 'geo:0,0?q=' + job.lat + ',' + job.lng + '(' + label + ')';
+    if (IS_IOS)     return 'https://maps.apple.com/?ll=' + job.lat + ',' + job.lng + '&q=' + label;
+    return 'https://www.google.com/maps/search/?api=1&query=' + job.lat + '%2C' + job.lng;
+  }
+  // geo: hands off to an app, so it must stay in this tab. https should open a
+  // new one, otherwise the operative loses the job list behind Maps.
+  function navTarget(url) { return url.indexOf('http') === 0 ? ' target="_blank" rel="noopener"' : ''; }
 
   /* ---------- Popup ---------- */
   function popupHtml(job) {
@@ -528,18 +960,19 @@
     if (job.desc) parts.push('<div class="pp-desc">' + esc(job.desc) + '</div>');
 
     var meta = [];
-    if (job.start) meta.push('Planned start: ' + nice(job.start));
-    if (job.complete) meta.push('Complete by: ' + nice(job.complete) + ' (' + urgencyLabel(job.complete) + ')');
+    if (job.start) meta.push('Scheduled: ' + niceDT(job.start));
+    if (job.complete) meta.push('Complete by: ' + niceDT(job.complete) + ' (' + urgencyLabel(job.complete) + ')');
     if (job.tm) meta.push('TM: ' + esc(job.tm));
     if (job.status) meta.push('Status: ' + esc(job.status));
     if (job.note) meta.push(esc(job.note));
     parts.push('<div class="pp-meta">' + meta.join('<br>') + '</div>');
 
     if (job.lat != null) {
+      var url = navUrl(job);
       parts.push('<div class="pp-coords">' + job.lat.toFixed(6) + ', ' + job.lng.toFixed(6) + '</div>');
       parts.push('<div class="pp-btns">' +
         '<button class="pp-copy" onclick="copyCoords(' + job.lat + ',' + job.lng + ')">Copy coords</button>' +
-        '<button class="pp-nav" onclick="showOnMaps(' + job.lat + ',' + job.lng + ',&quot;' + esc(job.ref) + '&quot;)">Open in Maps</button>' +
+        '<a class="pp-nav" href="' + esc(url) + '"' + navTarget(url) + '>Open in Maps</a>' +
         '</div>');
     }
 
@@ -550,14 +983,6 @@
       '</div>' + parts.join('') + '</div>';
   }
 
-  /* Uses the geo: URI scheme, NOT an https link.
-     Link-rewriters such as Mimecast only touch http/https, so this passes
-     straight through to Google Maps. It DROPS A PIN at the job rather than
-     forcing turn-by-turn - the gang taps Directions themselves if they want it. */
-  function showOnMaps(lat, lng, ref) {
-    if (lat == null || lng == null) return;
-    window.location.href = 'geo:0,0?q=' + lat + ',' + lng + '(' + encodeURIComponent(ref || 'Job') + ')';
-  }
   function copyCoords(lat, lng) {
     var txt = lat + ',' + lng;
     if (navigator.clipboard) {
@@ -569,17 +994,113 @@
       prompt('Copy these coordinates:', txt);
     }
   }
-  window.showOnMaps = showOnMaps;
   window.copyCoords = copyCoords;
 
-  /* ---------- Filtering ---------- */
-  function cmp(a, b) {
-    return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity:'base' });
+  /* ---------- Live location ---------- */
+  function meIcon(heading) {
+    var arrow = (heading != null && isFinite(heading))
+      ? '<div class="me-arrow" style="transform:rotate(' + heading + 'deg)"></div>' : '';
+    return L.divIcon({
+      html: '<div class="me-wrap"><div class="me-dot"></div>' + arrow + '</div>',
+      className: '', iconSize: [20,20], iconAnchor: [10,10]
+    });
+  }
+
+  // Metres, equirectangular. The old version compared raw degrees, which at UK
+  // latitudes overweights longitude by ~1.6x and skewed "Nearest first" E-W.
+  function metresBetween(aLat, aLng, bLat, bLng) {
+    var R = 6371000;
+    var rad = Math.PI / 180;
+    var x = (bLng - aLng) * rad * Math.cos((aLat + bLat) / 2 * rad);
+    var y = (bLat - aLat) * rad;
+    return R * Math.sqrt(x * x + y * y);
   }
   function distanceOf(job) {
     if (!userLocation || job.lat == null) return Number.MAX_SAFE_INTEGER;
-    var dx = job.lat - userLocation.lat, dy = job.lng - userLocation.lng;
-    return Math.sqrt(dx * dx + dy * dy);
+    return metresBetween(userLocation.lat, userLocation.lng, job.lat, job.lng);
+  }
+  // Yards below a quarter of a mile, miles above - which is how a UK driver
+  // actually thinks about distance, rather than decimal miles all the way down.
+  function niceDistance(m) {
+    if (m >= Number.MAX_SAFE_INTEGER) return '';
+    if (state.units === 'imperial') {
+      if (m < 400) return Math.round(m * 1.09361) + ' yd';
+      var mi = m / 1609.344;
+      return mi.toFixed(mi < 10 ? 1 : 0) + ' mi';
+    }
+    return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10 * 1000 ? 1 : 0) + ' km';
+  }
+
+  function onPosition(p) {
+    userLocation = {
+      lat: p.coords.latitude,
+      lng: p.coords.longitude,
+      acc: p.coords.accuracy,
+      heading: p.coords.heading
+    };
+    var ll = [userLocation.lat, userLocation.lng];
+
+    // One marker, reused. The old code added a fresh circleMarker on every
+    // press of Locate and never removed the previous ones.
+    if (!meMarker) {
+      meCircle = L.circle(ll, { radius: userLocation.acc || 0, color:'#3d8bfd', weight:1, fillColor:'#3d8bfd', fillOpacity:.12, interactive:false }).addTo(map);
+      meMarker = L.marker(ll, { icon: meIcon(userLocation.heading), zIndexOffset: 1000, interactive:false }).addTo(map);
+    } else {
+      meMarker.setLatLng(ll).setIcon(meIcon(userLocation.heading));
+      meCircle.setLatLng(ll).setRadius(userLocation.acc || 0);
+    }
+
+    if (followMode) map.setView(ll, Math.max(map.getZoom(), 15), { animate:true });
+
+    // Re-sorting on every GPS tick would rebuild the list several times a
+    // second. Only redo it once the operative has actually moved.
+    if (state.sort === 'distance') {
+      var moved = !lastSortPos || metresBetween(lastSortPos.lat, lastSortPos.lng, userLocation.lat, userLocation.lng) > 25;
+      if (moved) { lastSortPos = { lat:userLocation.lat, lng:userLocation.lng }; render(); }
+    }
+  }
+  function onPositionError(err) {
+    setFollow(false);
+    var msg = err && err.code === 1 ? 'Location permission denied'
+            : err && err.code === 3 ? 'Location timed out - poor signal?'
+            : 'Unable to get your location';
+    toast(msg);
+  }
+  function startWatch() {
+    if (geoWatchId != null) return true;
+    if (!navigator.geolocation) { toast('GPS unavailable on this device'); return false; }
+    geoWatchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true, maximumAge: 5000, timeout: 20000
+    });
+    return true;
+  }
+  function stopWatch() {
+    if (geoWatchId != null) { navigator.geolocation.clearWatch(geoWatchId); geoWatchId = null; }
+  }
+  function setFollow(on) {
+    followMode = on;
+    document.getElementById('followButton').classList.toggle('on', on);
+    if (on) {
+      if (!startWatch()) { followMode = false; document.getElementById('followButton').classList.remove('on'); return; }
+      if (userLocation) map.setView([userLocation.lat, userLocation.lng], Math.max(map.getZoom(), 15));
+      toast('Following your location');
+    }
+    // The watch is deliberately left running when follow is turned off: the
+    // dot and the "Nearest first" sort both stay live, the map just stops
+    // recentring. stopWatch() is only called when the page is hidden.
+  }
+
+  /* ---------- Filtering ---------- */
+  function cmp(a, b) {
+    return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity:'base', numeric:true });
+  }
+  function activeFilterCount() {
+    var n = 0;
+    if (state.gang !== '__all') n++;
+    if (state.date !== '__all') n++;
+    if (state.completion !== 'active') n++;
+    if (state.sort !== 'urgency') n++;
+    return n;
   }
   function applyFilters() {
     var q = state.search.trim().toLowerCase();
@@ -600,13 +1121,19 @@
     var time = function (d) { return d ? new Date(d).getTime() : 9e15; };
     var sorters = {
       spreadsheet: function () { return 0; },
-      duedate: function (a, b) { return (time(a.complete) - time(b.complete)) || cmp(a.ref, b.ref); },
+      // Overdue first, then due today, then future; within a band, soonest
+      // deadline wins. This is the order a gang actually works in.
+      urgency:  function (a, b) {
+        return (priorityOf(a) - priorityOf(b)) || (time(a.complete) - time(b.complete)) || cmp(a.ref, b.ref);
+      },
+      duedate:  function (a, b) { return (time(a.complete) - time(b.complete)) || cmp(a.ref, b.ref); },
       planned:  function (a, b) { return (time(a.start) - time(b.start)) || cmp(a.ref, b.ref); },
       ref:      function (a, b) { return cmp(a.ref, b.ref); },
-      addr:     function (a, b) { return cmp(a.addr, b.addr); },
+      // Street then house number, so a whole road reads as one block.
+      addr:     function (a, b) { return cmp(a.street || a.addr, b.street || b.addr) || cmp(a.atNo, b.atNo) || cmp(a.ref, b.ref); },
       distance: function (a, b) { return userLocation ? (distanceOf(a) - distanceOf(b)) : cmp(a.ref, b.ref); }
     };
-    filteredJobs.sort(sorters[state.sort] || sorters.spreadsheet);
+    filteredJobs.sort(sorters[state.sort] || sorters.urgency);
 
     // Pin numbers and list numbers must always agree.
     filteredJobs.forEach(function (job, i) { job.displayNum = i + 1; });
@@ -662,6 +1189,20 @@
     var pill = document.getElementById('overduePill');
     if (overdue > 0) { pill.hidden = false; pill.textContent = overdue + ' overdue'; }
     else pill.hidden = true;
+
+    document.getElementById('listBadge').textContent = filteredJobs.length ? '(' + filteredJobs.length + ')' : '';
+
+    var fc = document.getElementById('filterCount');
+    var n = activeFilterCount();
+    if (n) { fc.hidden = false; fc.textContent = n; } else fc.hidden = true;
+
+    var note = document.getElementById('dataNote');
+    if (note) {
+      note.innerHTML = jobs.length
+        ? '<b>' + jobs.length + ' jobs</b> from ' + esc(fileLabel || 'the loaded export') +
+          (loadedAt ? ', loaded ' + loadedAt.toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '') + '.'
+        : 'No export loaded yet. Use <b>Load file</b> at the top of the screen.';
+    }
   }
 
   function renderList() {
@@ -681,40 +1222,45 @@
       var missing = job.lat == null;
       var done = completedSet.has(job.id);
       var color = done ? '#8b98a9' : urgencyColor(job.complete);
+      var url = missing ? '' : navUrl(job);
+      var dist = (userLocation && !missing) ? niceDistance(distanceOf(job)) : '';
 
       var row = document.createElement('div');
       row.className = 'job-row' + (done ? ' completed' : '') + (selectedJobId === job.id ? ' selected' : '');
       row.setAttribute('data-id', job.id);
       row.innerHTML =
-        '<div class="job-pin" style="background:' + (missing ? 'var(--line)' : color) + '">' +
+        '<div class="job-pin job-tap" style="background:' + (missing ? 'var(--line)' : color) + '">' +
           (missing ? '!' : job.displayNum) +
         '</div>' +
         '<div>' +
-          '<div class="job-ref">' + esc(job.ref || 'No reference') + '</div>' +
-          '<div class="job-addr">' + esc(job.addr || 'No address') + (missing ? ' - no coordinates' : '') + '</div>' +
-          '<div class="job-meta">' +
-            (job.jobType ? '<span class="chip">' + esc(job.jobType) + '</span>' : '') +
-            (job.start ? '<span class="chip">Start ' + nice(job.start) + '</span>' : '') +
-            (job.complete ? '<span class="chip" style="color:' + color + ';border-color:' + color + '">' + urgencyLabel(job.complete) + '</span>' : '') +
+          '<div class="job-tap">' +
+            '<div class="job-ref">' + esc(job.ref || 'No reference') + '</div>' +
+            '<div class="job-addr">' + esc(job.addr || 'No address') + (missing ? ' - no coordinates' : '') + '</div>' +
+            '<div class="job-meta">' +
+              (dist ? '<span class="chip dist">' + dist + '</span>' : '') +
+              (job.jobType ? '<span class="chip">' + esc(job.jobType) + '</span>' : '') +
+              (job.start ? '<span class="chip">Sched ' + niceDT(job.start) + '</span>' : '') +
+              (job.complete ? '<span class="chip" style="color:' + color + ';border-color:' + color + '">' + urgencyLabel(job.complete) + '</span>' : '') +
+            '</div>' +
           '</div>' +
           '<div class="job-actions">' +
-            '<button class="job-action nav"' + (missing ? ' disabled' : '') + '>Open in Maps</button>' +
-            '<button class="job-action done">' + (done ? 'Undo done' : 'Mark done (my phone)') + '</button>' +
+            (missing
+              ? '<span class="job-action nav disabled">Open in Maps</span>'
+              : '<a class="job-action nav" href="' + esc(url) + '"' + navTarget(url) + '>Open in Maps</a>') +
+            (missing ? '' : '<button class="job-action pin" title="Show on map" aria-label="Show on map">'  + '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">'  + '<path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>'  + '</button>') +
+            '<button class="job-action done">' + (done ? 'Undo' : 'Mark done') + '</button>' +
           '</div>' +
         '</div>';
 
-      row.querySelector('.job-ref').onclick = function () { if (!missing) selectJob(job.id, true); };
-      row.querySelector('.job-addr').onclick = function () { if (!missing) selectJob(job.id, true); };
-      if (!missing) {
-        row.querySelector('.nav').onclick = function (e) {
-          e.stopPropagation();
-          showOnMaps(job.lat, job.lng, job.ref);
-        };
-      }
-      row.querySelector('.done').onclick = function (e) {
-        e.stopPropagation();
-        toggleDone(job.id);
-      };
+      // Tapping the body opens the card in place - it does NOT jump to the map,
+      // so an operative reading down the list keeps their place.
+      Array.prototype.forEach.call(row.querySelectorAll('.job-tap'), function (el) {
+        el.onclick = function () { selectedJobId = job.id; openCard(job); refreshMarkerIcons(); };
+      });
+      var pinBtn = row.querySelector('.pin');
+      if (pinBtn) pinBtn.onclick = function (e) { e.stopPropagation(); selectJob(job.id, true); };
+      row.querySelector('.done').onclick = function (e) { e.stopPropagation(); toggleDone(job.id); };
+
       list.appendChild(row);
     });
   }
@@ -773,52 +1319,22 @@
     saveState();
   }
 
-  /* ---------- Resizable / collapsible list ---------- */
-  function initResizer() {
-    var bar = document.getElementById('dragBar');
-    var sheet = document.getElementById('sheet');
-    var dragging = false;
-
-    // Never let the list squeeze the map below MIN_MAP_PX - that was what
-    // pushed job pins off-screen when the popup tried to open.
-    var MIN_MAP_PX = 240;
-
-    function setHeight(px) {
-      var max = window.innerHeight - MIN_MAP_PX;
-      var h = Math.max(0, Math.min(max, px));
-      document.documentElement.style.setProperty('--sheet-h', h + 'px');
-      state.sheetH = h + 'px';
+  /* ---------- Tabs ---------- */
+  function showTab(paneId) {
+    state.tab = paneId;
+    ['listPane','mapPane','settingsPane'].forEach(function (id) {
+      document.getElementById(id).classList.toggle('active', id === paneId);
+    });
+    document.getElementById('tabList').classList.toggle('active', paneId === 'listPane');
+    document.getElementById('tabMap').classList.toggle('active', paneId === 'mapPane');
+    document.getElementById('tabSettings').classList.toggle('active', paneId === 'settingsPane');
+    // Leaflet measures its container on creation. A map that was hidden when
+    // it initialised renders grey tiles until it is told to re-measure.
+    if (paneId === 'mapPane' && map) {
       map.invalidateSize();
+      setTimeout(function () { map.invalidateSize(); }, 120);
     }
-
-    bar.addEventListener('pointerdown', function (e) {
-      dragging = true;
-      bar.setPointerCapture(e.pointerId);
-    });
-    bar.addEventListener('pointermove', function (e) {
-      if (dragging) setHeight(window.innerHeight - e.clientY);
-    });
-    bar.addEventListener('pointerup', function (e) {
-      dragging = false;
-      try { bar.releasePointerCapture(e.pointerId); } catch (err) {}
-      saveState();
-    });
-
-    // Double-tap the handle to collapse / restore the list.
-    var lastTap = 0;
-    bar.addEventListener('click', function () {
-      var now = Date.now();
-      if (now - lastTap < 350) {
-        state.collapsed = !state.collapsed;
-        sheet.classList.toggle('collapsed', state.collapsed);
-        map.invalidateSize();
-        saveState();
-      }
-      lastTap = now;
-    });
-
-    if (state.sheetH) document.documentElement.style.setProperty('--sheet-h', state.sheetH);
-    sheet.classList.toggle('collapsed', !!state.collapsed);
+    saveState();
   }
 
   /* ---------- Startup ---------- */
@@ -826,15 +1342,24 @@
     document.getElementById('searchInput').value = state.search || '';
     document.getElementById('completionFilter').value = state.completion;
     document.getElementById('sortFilter').value = state.sort;
+    document.getElementById('iosNote').hidden = !IS_IOS;
+    document.getElementById('themeSelect').value = state.theme || 'auto';
+    document.getElementById('unitsSelect').value = state.units || 'metric';
+    document.getElementById('awakeToggle').checked = !!state.keepAwake;
+    if (!WAKE_SUPPORTED) {
+      document.getElementById('awakeRow').classList.add('unavailable');
+      document.getElementById('awakeToggle').disabled = true;
+      document.getElementById('awakeSub').textContent = 'Not supported by this browser';
+    }
   }
 
   function setStatus() {
     var pill = document.getElementById('statusPill');
-    if (!jobs.length) { pill.textContent = 'No data loaded'; return; }
+    if (!jobs.length) { pill.textContent = 'No data'; return; }
     var when = loadedAt
       ? loadedAt.toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
       : '';
-    pill.textContent = jobs.length + ' jobs' + (when ? ' - loaded ' + when : '');
+    pill.textContent = jobs.length + ' jobs' + (when ? ' - ' + when : '');
   }
 
   function init() {
@@ -858,6 +1383,7 @@
         console.error(err);
         toast(err.message || 'Could not read that file');
       });
+      e.target.value = '';   // let the same filename be re-picked after a re-export
     });
 
     document.getElementById('searchInput').addEventListener('input', function (e) {
@@ -865,15 +1391,20 @@
     });
     document.getElementById('gangFilter').addEventListener('change', function (e) {
       state.gang = e.target.value; rebuildDropdowns(); render(); fitToFilter();
+      toast(filteredJobs.length + ' jobs match');
     });
     document.getElementById('dateFilter').addEventListener('change', function (e) {
       state.date = e.target.value; render(); fitToFilter();
+      toast(filteredJobs.length + ' jobs match');
     });
     document.getElementById('completionFilter').addEventListener('change', function (e) {
       state.completion = e.target.value; render();
     });
     document.getElementById('sortFilter').addEventListener('change', function (e) {
-      state.sort = e.target.value; render();
+      state.sort = e.target.value;
+      // "Nearest first" is useless without a fix, so ask for one immediately.
+      if (state.sort === 'distance' && !userLocation) startWatch();
+      render();
     });
 
     document.getElementById('todayButton').addEventListener('click', function () {
@@ -882,24 +1413,37 @@
       var found = false;
       for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === t) found = true;
       if (found) {
-        sel.value = t; state.date = t; render(); fitToFilter();
+        sel.value = t; state.date = t; render(); fitToFilter(); showTab('listPane');
       } else {
         toast('No jobs planned to start today');
       }
     });
 
-    document.getElementById('fitButton').addEventListener('click', fitToFilter);
+    document.getElementById('clearButton').addEventListener('click', function () {
+      state.search = ''; state.gang = '__all'; state.date = '__all';
+      state.completion = 'active'; state.sort = 'urgency';
+      rebuildDropdowns(); applyStateToControls(); render(); fitToFilter();
+      showTab('listPane');
+    });
 
-    document.getElementById('locateButton').addEventListener('click', function () {
-      if (!navigator.geolocation) { toast('GPS unavailable'); return; }
-      navigator.geolocation.getCurrentPosition(function (p) {
-        userLocation = { lat: p.coords.latitude, lng: p.coords.longitude };
-        L.circleMarker([userLocation.lat, userLocation.lng], {
-          radius:8, color:'#fff', fillColor:'#3d8bfd', fillOpacity:1, weight:2
-        }).addTo(map).bindPopup('You are here');
-        map.setView([userLocation.lat, userLocation.lng], 14);
-        render();
-      }, function () { toast('Unable to get your location'); });
+    document.getElementById('fitButton').addEventListener('click', fitToFilter);
+    document.getElementById('followButton').addEventListener('click', function () { setFollow(!followMode); });
+
+    document.getElementById('tabList').addEventListener('click', function () { showTab('listPane'); });
+    document.getElementById('tabMap').addEventListener('click', function () { showTab('mapPane'); });
+    document.getElementById('tabSettings').addEventListener('click', function () { showTab('settingsPane'); });
+
+    document.getElementById('themeSelect').addEventListener('change', function (e) {
+      state.theme = e.target.value; applyTheme(); saveState();
+    });
+    document.getElementById('unitsSelect').addEventListener('change', function (e) {
+      state.units = e.target.value; render();   // distance chips are re-rendered
+    });
+    document.getElementById('awakeToggle').addEventListener('change', function (e) {
+      state.keepAwake = e.target.checked;
+      applyWakeLock();
+      saveState();
+      toast(state.keepAwake ? 'Screen will stay awake' : 'Screen can sleep again');
     });
 
     document.getElementById('modalClose').addEventListener('click', closeDetails);
@@ -907,14 +1451,26 @@
       if (e.target.id === 'detailModal') closeDetails();   // tap backdrop to close
     });
 
-    initResizer();
+    // A GPS watch in the background is a battery drain for no benefit.
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) stopWatch();
+      else if (followMode || state.sort === 'distance') startWatch();
+      // The browser drops any wake lock when the page is hidden, so coming
+      // back has to re-acquire it or the setting silently stops working.
+      applyWakeLock();
+    });
 
     if (restoreState()) {
       rebuildDropdowns();
       applyStateToControls();
       render();
       setStatus();
+    } else {
+      applyStateToControls();
     }
+    applyTheme();
+    applyWakeLock();
+    showTab(['mapPane','settingsPane'].indexOf(state.tab) !== -1 ? state.tab : 'listPane');
   }
 
   init();
