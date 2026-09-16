@@ -24,6 +24,13 @@
          invisible: rgba(255,255,255,.05) works on the dark ground only. */
       --soft:rgba(255,255,255,.05); --soft2:rgba(255,255,255,.03);
       --soft3:rgba(255,255,255,.02); --legend-bg:rgba(15,20,25,.9);
+      /* Alert surfaces. These were hardcoded to dark-theme values, which left
+         the overdue pill, the stale-export banner, the toast and the distance
+         chip at roughly 1:1 contrast in the light theme - invisible in
+         daylight, which is exactly where the light theme gets used. */
+      --alert-bg:rgba(240,84,108,.22); --alert-fg:#ffffff;
+      --stale-bg:rgba(240,84,108,.16); --stale-fg:#ffd9e0;
+      --dist-fg:#9dc4ff;
       /* Safe areas: 0px fallback everywhere that doesn't support env(). */
       --sat: env(safe-area-inset-top, 0px);
       --sab: env(safe-area-inset-bottom, 0px);
@@ -43,6 +50,9 @@
         --accent:#1160d4; --ok:#1a7f37; --warn:#8a6100; --err:#c6303f;
         --soft:rgba(0,0,0,.05); --soft2:rgba(0,0,0,.03);
         --soft3:rgba(0,0,0,.02); --legend-bg:rgba(255,255,255,.94);
+        --alert-bg:#c6303f; --alert-fg:#ffffff;
+        --stale-bg:rgba(240,84,108,.16); --stale-fg:#7d1420;
+        --dist-fg:#1160d4;
       }
     }
     :root[data-theme="light"] {
@@ -50,6 +60,9 @@
       --accent:#1160d4; --ok:#1a7f37; --warn:#8a6100; --err:#c6303f;
       --soft:rgba(0,0,0,.05); --soft2:rgba(0,0,0,.03);
       --soft3:rgba(0,0,0,.02); --legend-bg:rgba(255,255,255,.94);
+      --alert-bg:#c6303f; --alert-fg:#ffffff;
+      --stale-bg:rgba(240,84,108,.16); --stale-fg:#7d1420;
+      --dist-fg:#1160d4;
     }
 
     * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -79,7 +92,7 @@
       white-space:nowrap; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
     }
     /* The overdue count is the one thing that must never be truncated away. */
-    .pill.alert { border-color:var(--err); color:#fff; background:rgba(240,84,108,.22); font-weight:700; flex:none; }
+    .pill.alert { border-color:var(--err); color:var(--alert-fg); background:var(--alert-bg); font-weight:700; flex:none; }
     /* Narrow phones: drop the decorations before the controls. */
     @media (max-width:400px) {
       .version { display:none; }
@@ -95,7 +108,7 @@
     .file-button { background:var(--accent); border-color:var(--accent); color:#fff; white-space:nowrap; }
 
     /* Stale-data banner */
-    .stale-bar { display:none; padding:9px 12px; background:rgba(240,84,108,.16); border-bottom:1px solid var(--err); color:#ffd9e0; font-size:12px; font-weight:600; flex:none; }
+    .stale-bar { display:none; padding:9px 12px; background:var(--stale-bg); border-bottom:1px solid var(--err); color:var(--stale-fg); font-size:12px; font-weight:600; flex:none; }
     .stale-bar.show { display:block; }
 
     /* ---------- Search ----------
@@ -210,7 +223,7 @@
     .job-addr { font-size:13px; color:var(--mut); margin-top:5px; word-break:break-word; }
     .job-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
     .chip { font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
-    .chip.dist { border-color:var(--accent); color:#9dc4ff; }
+    .chip.dist { border-color:var(--accent); color:var(--dist-fg); }
     .job-actions { display:flex; gap:7px; margin-top:10px; }
     .job-action {
       flex:1; border:none; border-radius:10px; min-height:var(--tap); padding:0 8px;
@@ -271,7 +284,7 @@
     .pp-copy { background:#3d8bfd; }
     .pp-nav { background:#2ea043; }
 
-    .toast { position:fixed; left:50%; bottom:calc(var(--sab) + 20px); transform:translateX(-50%); background:#111a24; border:1px solid var(--line); padding:11px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; max-width:90%; text-align:center; }
+    .toast { position:fixed; left:50%; bottom:calc(var(--sab) + 20px); transform:translateX(-50%); background:#111a24; color:#e6edf3; border:1px solid var(--line); padding:11px 16px; border-radius:999px; display:none; z-index:2000; font-size:13px; max-width:90%; text-align:center; }
 
     /* ---------- Tab bar (top) ---------- */
     .tabbar {
@@ -602,6 +615,10 @@
   var selectedJobId = null, fileLabel = '', loadedAt = null;
   var state = { search:'', gang:'__all', date:'__all', completion:'active', sort:'urgency', tab:'listPane',
                theme:'auto', units:'metric', keepAwake:false };
+
+  /* Set when a fit was asked for while the map pane was off screen, so it can
+     be carried out when the Map tab is next shown. See fitToFilter(). */
+  var pendingFit = false;
 
   /* Live location */
   var geoWatchId = null, meMarker = null, meCircle = null, followMode = false;
@@ -955,10 +972,25 @@
   }
   window.closeDetails = closeDetails;
 
+  // True only when the map pane is actually on screen. A pane with display:none
+  // measures 0, and Leaflet works the zoom out from the container size.
+  function mapIsVisible() {
+    var el = document.getElementById('mapPane');
+    return !!(el && el.clientWidth > 0 && el.clientHeight > 0);
+  }
+
   function fitToFilter() {
     var pts = [];
     filteredJobs.forEach(function (j) { if (j.lat != null) pts.push([j.lat, j.lng]); });
     if (!pts.length) { toast('No jobs with coordinates to fit'); return; }
+
+    // Every caller except the Fit button can fire while the Map tab is hidden -
+    // loading a file, changing either filter, Today only, Clear filters. With a
+    // zero-size container Leaflet's getBoundsZoom() computes a scale of 0, which
+    // clamps to minZoom, and the operative arrives at the Map tab looking at the
+    // whole world. Defer the fit until the pane is on screen instead.
+    if (!mapIsVisible()) { pendingFit = true; return; }
+    pendingFit = false;
     map.fitBounds(L.latLngBounds(pts).pad(0.18), { maxZoom: 15 });
   }
 
@@ -1367,7 +1399,12 @@
     // it initialised renders grey tiles until it is told to re-measure.
     if (paneId === 'mapPane' && map) {
       map.invalidateSize();
-      setTimeout(function () { map.invalidateSize(); }, 120);
+      setTimeout(function () {
+        map.invalidateSize();
+        // Carry out any fit that was requested while this pane was hidden, now
+        // that Leaflet has a real container size to measure.
+        if (pendingFit) fitToFilter();
+      }, 120);
     }
     saveState();
   }
