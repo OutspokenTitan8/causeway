@@ -30,6 +30,7 @@
          daylight, which is exactly where the light theme gets used. */
       --alert-bg:rgba(240,84,108,.22); --alert-fg:#ffffff;
       --stale-bg:rgba(240,84,108,.16); --stale-fg:#ffd9e0;
+      --update-bg:rgba(61,139,253,.18); --update-fg:#cfe2ff;
       --dist-fg:#9dc4ff;
       /* Safe areas: 0px fallback everywhere that doesn't support env(). */
       --sat: env(safe-area-inset-top, 0px);
@@ -52,6 +53,7 @@
         --soft3:rgba(0,0,0,.02); --legend-bg:rgba(255,255,255,.94);
         --alert-bg:#c6303f; --alert-fg:#ffffff;
         --stale-bg:rgba(240,84,108,.16); --stale-fg:#7d1420;
+        --update-bg:#0d4ea8; --update-fg:#ffffff;
         --dist-fg:#1160d4;
       }
     }
@@ -62,6 +64,7 @@
       --soft3:rgba(0,0,0,.02); --legend-bg:rgba(255,255,255,.94);
       --alert-bg:#c6303f; --alert-fg:#ffffff;
       --stale-bg:rgba(240,84,108,.16); --stale-fg:#7d1420;
+      --update-bg:#0d4ea8; --update-fg:#ffffff;
       --dist-fg:#1160d4;
     }
 
@@ -110,6 +113,19 @@
     /* Stale-data banner */
     .stale-bar { display:none; padding:9px 12px; background:var(--stale-bg); border-bottom:1px solid var(--err); color:var(--stale-fg); font-size:12px; font-weight:600; flex:none; }
     .stale-bar.show { display:block; }
+
+    /* Update banner. Same shape as the stale bar, but it is an action rather
+       than a warning, so it is a real <button> and sized to a tap target. */
+    .update-bar {
+      display:none; width:100%; text-align:left; font-family:inherit;
+      padding:11px 12px; min-height:var(--tap); cursor:pointer;
+      background:var(--update-bg); color:var(--update-fg);
+      border:none; border-bottom:1px solid var(--accent);
+      font-size:12px; font-weight:700; flex:none;
+    }
+    .update-bar.show { display:block; }
+    /* Destructive action, so it does not look like the neutral buttons. */
+    .button.danger { border-color:var(--err); color:var(--err); }
 
     /* ---------- Search ----------
        Lives on the List tab, NOT in Settings: it is used constantly, and
@@ -335,6 +351,7 @@
     </header>
 
     <div class="stale-bar" id="staleBar"></div>
+    <button class="update-bar" id="updateBar"></button>
 
     <nav class="tabbar">
       <button class="tab active" id="tabList" data-pane="listPane">
@@ -451,9 +468,21 @@
               Causeway, and another phone will not see it.
             </div>
             <div class="set-note" id="iosNote" hidden>
-              <b>iPhone: add this page to your Home Screen.</b> Safari deletes
-              saved data after seven days otherwise, which would clear your
-              loaded jobs and every "done" mark. Share &rarr; Add to Home Screen.
+              <b>iPhone: open this app on any working day.</b> Safari can delete a
+              site's saved data after seven days with no visit, which would clear
+              your loaded jobs and every "done" mark. Daily use prevents that.
+              Adding it to the Home Screen (Share &rarr; Add to Home Screen) also
+              helps it qualify for protected storage.
+            </div>
+            <div class="set-actions">
+              <button class="button" id="diagButton">Copy diagnostics</button>
+              <button class="button danger" id="clearDataButton">Clear all data</button>
+            </div>
+            <div class="set-note">
+              <b>Copy diagnostics</b> puts a short summary on the clipboard - version,
+              what is loaded and any errors - to paste into a message when something
+              is wrong. <b>Clear all data</b> wipes this phone's copy of the export,
+              the "done" marks and your settings. Neither one changes Causeway.
             </div>
           </div>
         </div>
@@ -487,7 +516,33 @@
      will lose their "done" marks and loaded export.
      ========================================================= */
 
-  var VERSION = 'v2.6';
+  /* ---------- Changelog ----------
+     v2.7.0  Support and data-safety additions, no change to how jobs are read.
+             - Update check: the page re-fetches its own URL on launch, compares
+               the VERSION string with the running one and offers a banner. No
+               service worker, so this stays a single file and needs a signal.
+             - Copy diagnostics, for when an operative rings up.
+             - Clear all data on this phone, for leavers and returned handsets.
+             - Asks for persistent storage, which excludes an origin from
+               Safari's seven-day eviction of script-written data. The old iPhone
+               note claimed Add to Home Screen granted that exemption; current
+               WebKit and MDN documentation does not say so, so it is reworded.
+             - Failed saves are recorded and surfaced instead of swallowed.
+     v2.6.1  Bug fixes only, no behaviour or data changes.
+             - Fit-to-jobs was running while the Map tab was hidden. A pane with
+               display:none measures 0, so Leaflet clamped the zoom to minZoom and
+               the map opened on the whole world. Now deferred until the pane is
+               on screen. Affected: loading a file, both filters, Today only,
+               Clear filters - i.e. every normal way of starting the day.
+             - Four colours were hardcoded to dark-theme values, leaving the
+               overdue pill, stale-export banner, toast and distance chip at about
+               1:1 contrast in the light theme. Now theme variables; all four meet
+               WCAG AA in both themes.
+     v2.6    Tabs across the top, light theme, units, keep-screen-awake.
+     ------------------------------------------------------------------
+     STORAGE_KEY is deliberately NOT bumped with the version: it keys the saved
+     export and the "done" marks, and changing it would wipe both on upgrade. */
+  var VERSION = 'v2.7.0';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -608,6 +663,26 @@
     jobType:['job type','task type','work type'],
     tm:['tm','traffic management','traffic management requirement']
   };
+
+  /* ---------- Error capture ----------
+     Nothing here changes behaviour; it exists so that "it's not working" can be
+     answered with something more than a shrug. Kept to a short ring buffer so it
+     cannot grow without bound, and read back by Copy diagnostics. */
+  var recentErrors = [];
+  var saveWarned = false;
+  function logError(what) {
+    try {
+      recentErrors.push(new Date().toLocaleTimeString('en-GB') + '  ' + String(what).slice(0, 200));
+      if (recentErrors.length > 8) recentErrors.shift();
+    } catch (e) { /* never let the logger itself throw */ }
+  }
+  window.addEventListener('error', function (e) {
+    logError((e.message || 'error') + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    logError('unhandled promise: ' + ((r && r.message) ? r.message : r));
+  });
 
   /* ---------- State ---------- */
   var map, markerCluster;
@@ -799,7 +874,16 @@
         fileLabel: fileLabel,
         loadedAt: loadedAt ? loadedAt.toISOString() : null
       }));
-    } catch (e) { /* quota / private mode - non-fatal */ }
+    } catch (e) {
+      // This used to be swallowed in silence, so a phone could be failing to keep
+      // a single "done" mark with nothing on screen to say so. Record it always,
+      // and tell the operative once - repeating it on every render would be noise.
+      logError('saveState failed: ' + ((e && e.name) ? e.name : e));
+      if (!saveWarned) {
+        saveWarned = true;
+        toast('Could not save to this phone - "done" marks may not survive a reload');
+      }
+    }
   }
   function restoreState() {
     try {
@@ -1356,6 +1440,153 @@
     render();
   }
 
+  /* ---------- Persistent storage ----------
+     Safari deletes script-written storage for an origin that has had no user
+     interaction for seven days of browser use; an origin in persistent mode is
+     excluded from that eviction. Safari decides automatically from interaction
+     history and shows no prompt, so there is no cost to asking on every load.
+     A no-op on browsers without the API. */
+  var storagePersisted = null;
+  function requestPersistence() {
+    if (!navigator.storage || !navigator.storage.persist) return;
+    try {
+      navigator.storage.persisted().then(function (already) {
+        if (already) { storagePersisted = true; return null; }
+        return navigator.storage.persist().then(function (ok) { storagePersisted = !!ok; });
+      })['catch'](function () { storagePersisted = null; });
+    } catch (e) { storagePersisted = null; }
+  }
+
+  /* ---------- Update check ----------
+     Deliberately not a service worker: that would need sw.js as a second file
+     and this is kept to one. Instead the page re-fetches its own URL and reads
+     the VERSION string out of the response. Costs one fetch of this file per
+     check, needs a signal, and cannot work offline - all acceptable, because an
+     update cannot be delivered offline either.
+
+     cache:'no-store' plus a cache-busting parameter, because GitHub Pages sets
+     its own caching headers and there may be a corporate proxy in between. */
+  var UPDATE_MIN_GAP = 30 * 60 * 1000;
+  var lastUpdateCheck = 0;
+  var updateFound = null;
+
+  function checkForUpdate(force) {
+    var now = Date.now();
+    if (updateFound) return;                                  // banner already up
+    if (!force && now - lastUpdateCheck < UPDATE_MIN_GAP) return;
+    if (navigator.onLine === false) return;
+    lastUpdateCheck = now;
+    fetch(location.pathname + '?_upd=' + now, { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (txt) {
+        if (!txt) return;
+        var m = txt.match(/var VERSION = '([^']+)'/);
+        if (!m || m[1] === VERSION) return;
+        updateFound = m[1];
+        var bar = document.getElementById('updateBar');
+        bar.textContent = 'Version ' + m[1] + ' is available – you are on ' +
+                          VERSION + '. Tap here to update.';
+        bar.className = 'update-bar show';
+      })['catch'](function () { /* offline, blocked, or not hosted - try later */ });
+  }
+
+  function applyUpdate() {
+    if (!updateFound) return;
+    saveState();
+    // Reload against a URL the cache has never seen, so nothing can hand back
+    // the old copy. The saved export and "done" marks live in localStorage and
+    // are keyed to the origin, so they survive this.
+    location.replace(location.pathname + '?v=' + encodeURIComponent(updateFound));
+  }
+
+  /* ---------- Diagnostics ----------
+     Everything needed to answer "it isn't working" without being sat next to
+     the phone. No job data and no addresses - just shape and state. */
+  function storageBytes() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? raw.length : 0;
+    } catch (e) { return -1; }
+  }
+  function diagnosticsText() {
+    var L = [];
+    L.push('Job Map ' + VERSION);
+    L.push('Taken: ' + new Date().toString());
+    L.push('');
+    L.push('Export:    ' + (jobs.length
+      ? jobs.length + ' jobs from "' + (fileLabel || 'unknown file') + '"' +
+        (loadedAt ? ', loaded ' + loadedAt.toLocaleString('en-GB') : '')
+      : 'none loaded'));
+    L.push('Showing:   ' + filteredJobs.length + ' after filters');
+    L.push('Done marks:' + ' ' + completedSet.size);
+    L.push('No coords: ' + jobs.filter(function (j) { return j.lat == null; }).length);
+    L.push('Filters:   gang=' + state.gang + ' date=' + state.date +
+           ' show=' + state.completion + ' sort=' + state.sort +
+           (state.search ? ' search="' + state.search + '"' : ''));
+    L.push('Display:   theme=' + state.theme + ' units=' + state.units +
+           ' keepAwake=' + state.keepAwake + (WAKE_SUPPORTED ? '' : ' (unsupported)'));
+    L.push('');
+    L.push('Storage:   ' + storageBytes() + ' bytes' +
+           ' persisted=' + (storagePersisted === null ? 'unknown' : storagePersisted));
+    L.push('Location:  ' + (userLocation
+      ? 'fix to ' + Math.round(userLocation.acc || 0) + 'm, watch=' + (geoWatchId != null)
+      : 'no fix, watch=' + (geoWatchId != null)));
+    L.push('Online:    ' + navigator.onLine + (updateFound ? ', update to ' + updateFound + ' pending' : ''));
+    L.push('Screen:    ' + window.innerWidth + 'x' + window.innerHeight +
+           ' dpr=' + (window.devicePixelRatio || 1) + ' standalone=' +
+           (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches));
+    L.push('Browser:   ' + navigator.userAgent);
+    L.push('');
+    L.push(recentErrors.length ? 'Errors:\n  ' + recentErrors.join('\n  ') : 'Errors:    none this session');
+    return L.join('\n');
+  }
+  function copyDiagnostics() {
+    var txt = diagnosticsText();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(txt).then(
+        function () { toast('Diagnostics copied - paste them into a message'); },
+        function () { prompt('Copy this and send it over:', txt); }
+      );
+    } else {
+      prompt('Copy this and send it over:', txt);
+    }
+  }
+
+  /* ---------- Clear all data ----------
+     For a leaver, a returned handset, or a phone that has gone wrong. Two taps,
+     because it cannot be undone. Reuses the detail modal rather than confirm(),
+     which some home-screen web apps present badly. */
+  function askClearAllData() {
+    document.getElementById('modalBody').innerHTML =
+      '<div style="color:#111">' +
+        '<div style="font-size:16px;font-weight:700;margin-bottom:8px">Clear all data on this phone?</div>' +
+        '<div style="font-size:13px;line-height:1.5;margin-bottom:14px">This removes ' +
+          (jobs.length ? '<b>' + jobs.length + ' jobs</b>' : 'the loaded export') + ', <b>' +
+          completedSet.size + '</b> "done" mark' + (completedSet.size === 1 ? '' : 's') +
+          ' and your saved settings from this device. It cannot be undone. Nothing in ' +
+          'Causeway changes, and you can load the export again afterwards.</div>' +
+        '<div style="display:flex;gap:8px">' +
+          '<button id="clearCancel" style="flex:1;border:none;border-radius:8px;min-height:44px;' +
+            'font-family:inherit;font-size:13px;font-weight:700;color:#fff;background:#6b7785;cursor:pointer">Cancel</button>' +
+          '<button id="clearConfirm" style="flex:1;border:none;border-radius:8px;min-height:44px;' +
+            'font-family:inherit;font-size:13px;font-weight:700;color:#fff;background:#c6303f;cursor:pointer">Clear everything</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById('detailModal').classList.add('open');
+    document.getElementById('clearCancel').onclick = closeDetails;
+    document.getElementById('clearConfirm').onclick = function () {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(THEME_KEY);
+      } catch (e) { logError('clear failed: ' + ((e && e.name) ? e.name : e)); }
+      jobs = []; filteredJobs = []; completedSet = new Set();
+      fileLabel = ''; loadedAt = null; selectedJobId = null;
+      closeDetails();
+      // Straight back to a clean boot, so nothing stale is left in memory.
+      location.replace(location.pathname);
+    };
+  }
+
   /* ---------- Stale-data check ---------- */
   function checkStale() {
     var bar = document.getElementById('staleBar');
@@ -1518,6 +1749,10 @@
       toast(state.keepAwake ? 'Screen will stay awake' : 'Screen can sleep again');
     });
 
+    document.getElementById('updateBar').addEventListener('click', applyUpdate);
+    document.getElementById('diagButton').addEventListener('click', copyDiagnostics);
+    document.getElementById('clearDataButton').addEventListener('click', askClearAllData);
+
     document.getElementById('modalClose').addEventListener('click', closeDetails);
     document.getElementById('detailModal').addEventListener('click', function (e) {
       if (e.target.id === 'detailModal') closeDetails();   // tap backdrop to close
@@ -1527,6 +1762,8 @@
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) stopWatch();
       else if (followMode || state.sort === 'distance') startWatch();
+      // Coming back to the app is the natural moment to look for a new version.
+      if (!document.hidden) checkForUpdate(false);
       // The browser drops any wake lock when the page is hidden, so coming
       // back has to re-acquire it or the setting silently stops working.
       applyWakeLock();
@@ -1542,6 +1779,8 @@
     }
     applyTheme();
     applyWakeLock();
+    requestPersistence();
+    checkForUpdate(true);
     showTab(['mapPane','settingsPane'].indexOf(state.tab) !== -1 ? state.tab : 'listPane');
   }
 
