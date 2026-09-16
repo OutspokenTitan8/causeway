@@ -227,6 +227,14 @@
       display:grid; gap:9px; align-content:start;
     }
     .empty { padding:22px; text-align:center; color:var(--mut); border:1px dashed var(--line); border-radius:12px; }
+    /* Shown when "Nearest first" is selected but there is no fix yet. Without it
+       the list looks sorted by distance when it is actually in reference order. */
+    .sort-note {
+      margin:10px calc(12px + var(--sar)) 0 calc(12px + var(--sal));
+      padding:10px 12px; border-radius:10px; flex:none;
+      background:var(--soft2); border:1px solid var(--warn); color:var(--txt);
+      font-size:12px; line-height:1.5; font-weight:600;
+    }
 
     /* ---------- Job rows ---------- */
     .job-row { display:grid; grid-template-columns:36px 1fr; gap:10px; padding:12px; border-radius:12px; border:1px solid var(--soft); background:var(--soft3); }
@@ -375,6 +383,7 @@
           <input id="searchInput" type="search" placeholder="Search ref, street, description" />
         </div>
         <div class="stats" id="statsPanel"></div>
+        <div class="sort-note" id="sortNote" hidden></div>
         <div class="list" id="jobList"><div class="empty">Load the daily export to see jobs on the map.</div></div>
       </section>
 
@@ -424,7 +433,6 @@
               <label for="sortFilter">Sort by</label>
               <select id="sortFilter">
                 <option value="urgency">Most urgent first</option>
-                <option value="duedate">Due date &amp; time</option>
                 <option value="planned">Scheduled date &amp; time</option>
                 <option value="distance">Nearest first</option>
                 <option value="addr">Street (groups same road)</option>
@@ -517,6 +525,15 @@
      ========================================================= */
 
   /* ---------- Changelog ----------
+     v2.8.0  - Dropped the "Due date & time" sort. It produced byte-identical
+               output to "Most urgent first" on every input: the urgency bands
+               are themselves defined by the completion date, so ordering by
+               band then date can only reproduce plain date order. A saved
+               setting of 'duedate' migrates to 'urgency' on load.
+             - "Nearest first" now says so when it has no fix. It was falling
+               back to job-reference order in silence, which looks sorted but
+               is not, and after a reload nothing restarted the GPS watch, so
+               it stayed that way indefinitely.
      v2.7.0  Support and data-safety additions, no change to how jobs are read.
              - Update check: the page re-fetches its own URL on launch, compares
                the VERSION string with the running one and offers a banner. No
@@ -542,7 +559,7 @@
      ------------------------------------------------------------------
      STORAGE_KEY is deliberately NOT bumped with the version: it keys the saved
      export and the "done" marks, and changing it would wipe both on upgrade. */
-  var VERSION = 'v2.7.0';
+  var VERSION = 'v2.8.0';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -697,6 +714,10 @@
 
   /* Live location */
   var geoWatchId = null, meMarker = null, meCircle = null, followMode = false;
+  /* Last geolocation problem, so "Nearest first" can say why it has no fix:
+     null = fine or not asked, 1 = permission refused, 2 = position unavailable,
+     3 = timed out, 'unsupported' = no API on this device. */
+  var geoError = null;
   var lastSortPos = null;
 
   /* ---------- Utilities ---------- */
@@ -898,6 +919,9 @@
       });
       completedSet = new Set(saved.completed || []);
       if (saved.state) Object.keys(saved.state).forEach(function (k) { state[k] = saved.state[k]; });
+      // 'duedate' was removed in v2.8.0 as a duplicate of 'urgency'. Phones that
+      // saved it would otherwise show an empty Sort by box.
+      if (state.sort === 'duedate') state.sort = 'urgency';
       fileLabel = saved.fileLabel || '';
       loadedAt = saved.loadedAt ? new Date(saved.loadedAt) : null;
       return jobs.length > 0;
@@ -1183,6 +1207,7 @@
   }
 
   function onPosition(p) {
+    geoError = null;
     userLocation = {
       lat: p.coords.latitude,
       lng: p.coords.longitude,
@@ -1212,14 +1237,16 @@
   }
   function onPositionError(err) {
     setFollow(false);
+    geoError = (err && err.code) ? err.code : 2;
     var msg = err && err.code === 1 ? 'Location permission denied'
             : err && err.code === 3 ? 'Location timed out - poor signal?'
             : 'Unable to get your location';
     toast(msg);
+    renderSortNote();   // the Nearest-first notice can now say what went wrong
   }
   function startWatch() {
     if (geoWatchId != null) return true;
-    if (!navigator.geolocation) { toast('GPS unavailable on this device'); return false; }
+    if (!navigator.geolocation) { geoError = 'unsupported'; toast('GPS unavailable on this device'); return false; }
     geoWatchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
       enableHighAccuracy: true, maximumAge: 5000, timeout: 20000
     });
@@ -1277,7 +1304,6 @@
       urgency:  function (a, b) {
         return (priorityOf(a) - priorityOf(b)) || (time(a.complete) - time(b.complete)) || cmp(a.ref, b.ref);
       },
-      duedate:  function (a, b) { return (time(a.complete) - time(b.complete)) || cmp(a.ref, b.ref); },
       planned:  function (a, b) { return (time(a.start) - time(b.start)) || cmp(a.ref, b.ref); },
       ref:      function (a, b) { return cmp(a.ref, b.ref); },
       // Street then house number, so a whole road reads as one block.
@@ -1353,6 +1379,34 @@
         ? '<b>' + jobs.length + ' jobs</b> from ' + esc(fileLabel || 'the loaded export') +
           (loadedAt ? ', loaded ' + loadedAt.toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '') + '.'
         : 'No export loaded yet. Use <b>Load file</b> at the top of the screen.';
+    }
+  }
+
+  /* Says plainly when "Nearest first" is not actually ordering by distance.
+     The fallback in applyFilters() is job-reference order, which looks perfectly
+     sorted, so without this the operative has no way of telling. */
+  function renderSortNote() {
+    var el = document.getElementById('sortNote');
+    if (!el) return;
+    if (state.sort !== 'distance' || userLocation) { el.hidden = true; return; }
+    el.hidden = false;
+    if (geoError === 1) {
+      el.textContent = 'Nearest first needs your location, and this site was refused ' +
+        'permission. The list below is in job reference order. Allow location for this ' +
+        'site in your browser settings, then pick the sort again.';
+    } else if (geoError === 'unsupported') {
+      el.textContent = 'This device has no location support, so Nearest first cannot ' +
+        'work. The list below is in job reference order.';
+    } else if (geoError === 3) {
+      el.textContent = 'Nearest first is still waiting for a GPS fix \u2013 the last ' +
+        'attempt timed out, which usually means poor signal. The list below is in job ' +
+        'reference order until a fix arrives.';
+    } else if (geoError) {
+      el.textContent = 'Nearest first cannot get a position at the moment. The list ' +
+        'below is in job reference order until a fix arrives.';
+    } else {
+      el.textContent = 'Nearest first is waiting for a GPS fix. The list below is in ' +
+        'job reference order until one arrives.';
     }
   }
 
@@ -1611,6 +1665,7 @@
   function render() {
     applyFilters();
     renderStats();
+    renderSortNote();
     renderList();
     syncMarkers();
     checkStale();
@@ -1780,6 +1835,9 @@
     applyTheme();
     applyWakeLock();
     requestPersistence();
+    // A saved "Nearest first" used to come back with no GPS watch running, so the
+    // list sat in reference order indefinitely. Ask for a fix on load instead.
+    if (state.sort === 'distance' && !userLocation) startWatch();
     checkForUpdate(true);
     showTab(['mapPane','settingsPane'].indexOf(state.tab) !== -1 ? state.tab : 'listPane');
   }
