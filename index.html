@@ -339,6 +339,23 @@
        so the badge has to be hidden explicitly or it shows with 0 filters. */
     .tab .dot[hidden] { display:none; }
 
+    /* ---------- Map layers (shapefiles) ----------
+       Layer points are DIAMONDS. Circles already mean "a job" and rounded
+       squares "a group of jobs", so a grit bin must not look like either. */
+    .lyr-marker { width:20px; height:20px; margin:4px; transform:rotate(45deg); border:3px solid #fff; border-radius:4px; box-shadow:0 2px 6px rgba(0,0,0,.45); }
+    .lyr-cluster { position:relative; width:44px; height:44px; display:grid; place-items:center; color:#fff; }
+    .lyr-cluster::before { content:''; position:absolute; inset:6px; transform:rotate(45deg); border-radius:6px; background:var(--c); border:2px solid #fff; box-shadow:0 2px 8px rgba(0,0,0,.5); }
+    .lyr-cluster b { position:relative; font-size:13px; font-weight:800; line-height:1; }
+    .legend i.dia { border-radius:2px; transform:rotate(45deg); width:10px; height:10px; }
+    #layerLegend { display:contents; }
+    .lyr-row { display:flex; align-items:center; gap:10px; }
+    .lyr-row .set-toggle { flex:1; min-width:0; }
+    .lyr-row .lbl { min-width:0; overflow-wrap:anywhere; }
+    .lyr-row .button { flex:none; min-width:0; }
+    .pp-table { font-size:12px; color:#222; border-collapse:collapse; width:100%; margin-bottom:8px; }
+    .pp-table th { text-align:left; color:#666; font-weight:600; padding:3px 8px 3px 0; vertical-align:top; white-space:nowrap; }
+    .pp-table td { padding:3px 0; overflow-wrap:anywhere; }
+
     /* Detail modal */
     .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:3000; padding:16px; }
     .modal.open { display:flex; }
@@ -398,6 +415,7 @@
           <span><i style="background:#d29922"></i>Due today</span>
           <span><i style="background:#2ea043"></i>Future</span>
           <span><i style="background:#8b98a9;border-radius:3px"></i>Square = grouped jobs</span>
+          <div id="layerLegend"></div>
         </div>
       </section>
 
@@ -469,6 +487,23 @@
           </div>
 
           <div class="set-group">
+            <h2>Map layers</h2>
+            <div id="layerList"></div>
+            <div class="set-actions">
+              <!-- No accept= filter: Android's picker greys out extensions it has
+                   no MIME type for, and .shp/.dbf/.prj are among them. -->
+              <label class="button">Load shapefile<input id="layerInput" type="file" multiple hidden></label>
+            </div>
+            <div class="set-note">
+              For extra things to see on the map, such as grit bins. Pick the
+              <b>.shp</b>, <b>.dbf</b> and <b>.prj</b> files together (press and
+              hold to select more than one), or a single <b>.zip</b> holding them.
+              Layers show on the map only, not in the job list. They are read on
+              this phone and nothing is uploaded.
+            </div>
+          </div>
+
+          <div class="set-group">
             <h2>This device</h2>
             <div class="set-note" id="dataNote"></div>
             <div class="set-note">
@@ -525,6 +560,19 @@
      ========================================================= */
 
   /* ---------- Changelog ----------
+     v2.9.0  Map layers: shapefiles can be loaded as an extra layer on the map,
+             first use being the "Grit Bins Requiring Filling" export.
+             - Settings > Map layers > Load shapefile. Takes the .shp + .dbf + .prj
+               (+ .cpg) picked together, or one .zip holding them. Read on the
+               phone; nothing is uploaded. Point layers only.
+             - British National Grid is converted to lat/long here, using the OS
+               published Helmert transform (good to a few metres). WGS84 layers
+               are used as they are.
+             - Diamond markers in their own cluster group, so they never mix
+               with job counts. Grit bins are coloured by fill level.
+             - Layers are saved under their own key, so the job export and the
+               "done" marks are untouched. Clear all data removes them too.
+             - Fit button falls back to the layers when no jobs have coordinates.
      v2.8.0  - Dropped the "Due date & time" sort. It produced byte-identical
                output to "Most urgent first" on every input: the urgency bands
                are themselves defined by the completion date, so ordering by
@@ -559,7 +607,7 @@
      ------------------------------------------------------------------
      STORAGE_KEY is deliberately NOT bumped with the version: it keys the saved
      export and the "done" marks, and changing it would wipe both on upgrade. */
-  var VERSION = 'v2.8.0';
+  var VERSION = 'v2.9.0';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -702,15 +750,16 @@
   });
 
   /* ---------- State ---------- */
-  var map, markerCluster;
+  var map, markerCluster, layerCluster;
   var jobs = [], filteredJobs = [], completedSet = new Set(), userLocation = null;
   var selectedJobId = null, fileLabel = '', loadedAt = null;
   var state = { search:'', gang:'__all', date:'__all', completion:'active', sort:'urgency', tab:'listPane',
                theme:'auto', units:'metric', keepAwake:false };
 
   /* Set when a fit was asked for while the map pane was off screen, so it can
-     be carried out when the Map tab is next shown. See fitToFilter(). */
-  var pendingFit = false;
+     be carried out when the Map tab is next shown. Holds the function to run
+     (fitToFilter, or a fit to a newly loaded layer). See fitPoints(). */
+  var pendingFit = null;
 
   /* Live location */
   var geoWatchId = null, meMarker = null, meCircle = null, followMode = false;
@@ -973,6 +1022,27 @@
     });
     map.addLayer(markerCluster);
 
+    // Map layers get a cluster group of their own, so a group of grit bins is
+    // never counted as "N jobs" and never takes a job's urgency colour.
+    layerCluster = L.markerClusterGroup({
+      chunkedLoading: true,
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: true,
+      disableClusteringAtZoom: CLUSTER_OFF_AT_ZOOM,
+      maxClusterRadius: 55,
+      iconCreateFunction: function (cluster) {
+        var kids = cluster.getAllChildMarkers();
+        // Same rule as jobs: the group takes the colour of its most urgent point.
+        var best = null;
+        kids.forEach(function (m) { if (!best || m.options.rank < best.options.rank) best = m; });
+        return L.divIcon({
+          html: '<div class="lyr-cluster" style="--c:' + best.options.colour + '"><b>' + kids.length + '</b></div>',
+          className: '', iconSize: [44,44], iconAnchor: [22,22]
+        });
+      }
+    });
+    map.addLayer(layerCluster);
+
     // Dragging the map by hand means the operative wants to look somewhere
     // else, so stop yanking the view back to them on the next GPS tick.
     map.on('dragstart', function () { if (followMode) setFollow(false); });
@@ -1090,15 +1160,21 @@
   function fitToFilter() {
     var pts = [];
     filteredJobs.forEach(function (j) { if (j.lat != null) pts.push([j.lat, j.lng]); });
+    // No jobs on screen but a layer is showing (e.g. grit bins on their own):
+    // fit to that instead of refusing.
+    if (!pts.length) pts = visibleLayerPoints();
     if (!pts.length) { toast('No jobs with coordinates to fit'); return; }
+    fitPoints(pts, fitToFilter);
+  }
 
-    // Every caller except the Fit button can fire while the Map tab is hidden -
-    // loading a file, changing either filter, Today only, Clear filters. With a
-    // zero-size container Leaflet's getBoundsZoom() computes a scale of 0, which
-    // clamps to minZoom, and the operative arrives at the Map tab looking at the
-    // whole world. Defer the fit until the pane is on screen instead.
-    if (!mapIsVisible()) { pendingFit = true; return; }
-    pendingFit = false;
+  // Every caller except the Fit button can fire while the Map tab is hidden -
+  // loading a file, changing either filter, Today only, Clear filters. With a
+  // zero-size container Leaflet's getBoundsZoom() computes a scale of 0, which
+  // clamps to minZoom, and the operative arrives at the Map tab looking at the
+  // whole world. Defer the fit until the pane is on screen instead.
+  function fitPoints(pts, retry) {
+    if (!mapIsVisible()) { pendingFit = retry; return; }
+    pendingFit = null;
     map.fitBounds(L.latLngBounds(pts).pad(0.18), { maxZoom: 15 });
   }
 
@@ -1170,6 +1246,515 @@
     }
   }
   window.copyCoords = copyCoords;
+
+  /* =========================================================
+     MAP LAYERS (shapefiles)
+     Extra points to see on the map - first use is the "Grit Bins
+     Requiring Filling" export. Read entirely on the phone: the .shp
+     gives the points, the .dbf the attributes (one row per point, in
+     the same order), the .prj the projection and the .cpg the text
+     encoding. The .shx is an index the format does not need here.
+     ========================================================= */
+  var LAYER_KEY = 'job-map-layers-v1';
+  var JSZIP_URL = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+  var LAYER_DEFAULT_COLOUR = '#a371f7';   // purple: no job colour means this
+
+  /* Known exports get a proper popup and colours, the same way COL_LETTERS
+     maps the job export. A layer is matched when it has every field in
+     `match`. Anything else still loads, showing every non-empty attribute.
+     DBF field names are cut to 10 characters, which is why they read oddly. */
+  var LAYER_PROFILES = [{
+    key: 'gritbins',
+    match: ['asset_id', 'Grit Bin_1'],
+    noun: 'grit bins',
+    title: 'asset_id',
+    subtitle: 'site_name',
+    colourBy: 'Grit Bin_1',
+    // Matched lower-case, because the export has both "Quarter full" and
+    // "Quarter Full". Rank 0 is the most urgent and colours its cluster.
+    colours: [
+      { value:'empty',        label:'Empty',        colour:'#f0546c' },
+      { value:'quarter full', label:'Quarter full', colour:'#d29922' },
+      { value:'half full',    label:'Half full',    colour:'#3d8bfd' }
+    ],
+    rows: [
+      ['Fill level', 'Grit Bin_1'], ['Fill note', 'Grit Bin_2'],
+      ['Condition', 'Grit Bin_3'], ['Condition note', 'Grit Bin_4'],
+      ['Type', 'feature__1'], ['Route', 'insp_route'],
+      ['Last inspected', 'feature_in'], ['Site code', 'site_code']
+    ]
+  }];
+
+  var layers = [];
+
+  function profileByKey(key) {
+    for (var i = 0; i < LAYER_PROFILES.length; i++) if (LAYER_PROFILES[i].key === key) return LAYER_PROFILES[i];
+    return null;
+  }
+  function matchProfile(fields) {
+    for (var i = 0; i < LAYER_PROFILES.length; i++) {
+      var p = LAYER_PROFILES[i];
+      if (p.match.every(function (f) { return fields.indexOf(f) !== -1; })) return p;
+    }
+    return null;
+  }
+
+  /* British National Grid (OSGB36 easting/northing) -> WGS84 lat/lng.
+     Formulae from Ordnance Survey, "A guide to coordinate systems in Great
+     Britain": inverse Transverse Mercator on the Airy 1830 ellipsoid, then the
+     OS 7-parameter Helmert shift from OSGB36 to WGS84. The Helmert shift is
+     good to a few metres across GB; OS's OSTN15 grid would be exact but is a
+     15 MB download, far more than finding a grit bin needs. Checked against
+     PROJ (pyproj, same parameters): within 4 mm on every point of the grit
+     bin export. */
+  function bngToLatLng(E, N) {
+    var rad = Math.PI / 180;
+    var a = 6377563.396, b = 6356256.909, F0 = 0.9996012717;
+    var lat0 = 49 * rad, lon0 = -2 * rad, E0 = 400000, N0 = -100000;
+    var e2 = 1 - (b * b) / (a * a), n = (a - b) / (a + b), n2 = n * n, n3 = n * n * n;
+
+    var lat = lat0, M = 0;
+    do {
+      lat = (N - N0 - M) / (a * F0) + lat;
+      var dl = lat - lat0, sl = lat + lat0;
+      M = b * F0 * (
+        (1 + n + 1.25 * n2 + 1.25 * n3) * dl -
+        (3 * n + 3 * n2 + 2.625 * n3) * Math.sin(dl) * Math.cos(sl) +
+        (1.875 * n2 + 1.875 * n3) * Math.sin(2 * dl) * Math.cos(2 * sl) -
+        (35 / 24) * n3 * Math.sin(3 * dl) * Math.cos(3 * sl));
+    } while (Math.abs(N - N0 - M) >= 0.00001);
+
+    var sin = Math.sin(lat), cos = Math.cos(lat), tan = Math.tan(lat);
+    var nu = a * F0 / Math.sqrt(1 - e2 * sin * sin);
+    var rho = a * F0 * (1 - e2) / Math.pow(1 - e2 * sin * sin, 1.5);
+    var eta2 = nu / rho - 1;
+    var t2 = tan * tan, t4 = t2 * t2, t6 = t4 * t2, sec = 1 / cos;
+    var VII = tan / (2 * rho * nu);
+    var VIII = tan / (24 * rho * Math.pow(nu, 3)) * (5 + 3 * t2 + eta2 - 9 * t2 * eta2);
+    var IX = tan / (720 * rho * Math.pow(nu, 5)) * (61 + 90 * t2 + 45 * t4);
+    var X = sec / nu;
+    var XI = sec / (6 * Math.pow(nu, 3)) * (nu / rho + 2 * t2);
+    var XII = sec / (120 * Math.pow(nu, 5)) * (5 + 28 * t2 + 24 * t4);
+    var XIIA = sec / (5040 * Math.pow(nu, 7)) * (61 + 662 * t2 + 1320 * t4 + 720 * t6);
+    var dE = E - E0;
+    var phi = lat - VII * dE * dE + VIII * Math.pow(dE, 4) - IX * Math.pow(dE, 6);
+    var lam = lon0 + X * dE - XI * Math.pow(dE, 3) + XII * Math.pow(dE, 5) - XIIA * Math.pow(dE, 7);
+
+    // OSGB36 geodetic -> cartesian (Airy 1830, height taken as 0).
+    var sp = Math.sin(phi), cp = Math.cos(phi);
+    var nuA = a / Math.sqrt(1 - e2 * sp * sp);
+    var x1 = nuA * cp * Math.cos(lam), y1 = nuA * cp * Math.sin(lam), z1 = (1 - e2) * nuA * sp;
+
+    // Helmert OSGB36 -> WGS84 (OS published parameters, position-vector form).
+    var tx = 446.448, ty = -125.157, tz = 542.060, s = -20.4894e-6;
+    var sec2rad = rad / 3600;
+    var rx = 0.1502 * sec2rad, ry = 0.2470 * sec2rad, rz = 0.8421 * sec2rad;
+    var x2 = tx + (1 + s) * x1 - rz * y1 + ry * z1;
+    var y2 = ty + rz * x1 + (1 + s) * y1 - rx * z1;
+    var z2 = tz - ry * x1 + rx * y1 + (1 + s) * z1;
+
+    // Cartesian -> WGS84 geodetic.
+    var aW = 6378137, bW = 6356752.314245, e2W = 1 - (bW * bW) / (aW * aW);
+    var p = Math.sqrt(x2 * x2 + y2 * y2);
+    var latW = Math.atan2(z2, p * (1 - e2W)), prev;
+    do {
+      prev = latW;
+      var nuW = aW / Math.sqrt(1 - e2W * Math.sin(latW) * Math.sin(latW));
+      latW = Math.atan2(z2 + e2W * nuW * Math.sin(latW), p);
+    } while (Math.abs(latW - prev) > 1e-12);
+    return { lat: latW / rad, lng: Math.atan2(y2, x2) / rad };
+  }
+
+  /* ---------- .shp ----------
+     ESRI Shapefile Technical Description (1998). Header is 100 bytes; each
+     record is an 8-byte big-endian header (number, length in 16-bit words)
+     then little-endian content. Point, PointM and PointZ all start with
+     type, X, Y, so one reader covers the three. Returns one entry per record,
+     null where the record has no geometry. */
+  var SHAPE_NAMES = { 3:'lines', 5:'areas (polygons)', 8:'multipoints', 13:'lines', 15:'areas (polygons)',
+                      18:'multipoints', 23:'lines', 25:'areas (polygons)', 28:'multipoints', 31:'a multipatch' };
+  function readShp(buf) {
+    var dv = new DataView(buf);
+    if (buf.byteLength < 100 || dv.getInt32(0, false) !== 9994) throw new Error('That .shp file is not a shapefile.');
+    var type = dv.getInt32(32, true);
+    if ([0, 1, 11, 21].indexOf(type) === -1) {
+      throw new Error('Only point layers can be shown - this one holds ' + (SHAPE_NAMES[type] || 'shape type ' + type) + '.');
+    }
+    var out = [], off = 100, end = Math.min(buf.byteLength, dv.getInt32(24, false) * 2);
+    while (off + 12 <= end) {
+      var len = dv.getInt32(off + 4, false) * 2;
+      var st = dv.getInt32(off + 8, true);
+      if (st === 0 || len < 20 || off + 8 + len > buf.byteLength) out.push(null);
+      else out.push({ x: dv.getFloat64(off + 12, true), y: dv.getFloat64(off + 20, true) });
+      off += 8 + len;
+    }
+    return out;
+  }
+
+  /* ---------- .dbf ----------
+     dBASE III table: 32-byte header (record count, header length, record
+     length), 32-byte field descriptors ending at 0x0D, then fixed-width
+     records each led by a deletion flag ('*' = deleted). */
+  function encodingFromCpg(cpg) {
+    var c = String(cpg || '').trim();
+    if (!c) return '';
+    if (/utf-?8|65001/i.test(c)) return 'utf-8';
+    var m = c.match(/(\d{3,5})/);
+    if (m && /^125\d$/.test(m[1])) return 'windows-' + m[1];
+    if (m && m[1] === '88591') return 'iso-8859-1';
+    return c;
+  }
+  function makeDecoder(enc, bytes) {
+    if (enc) { try { return new TextDecoder(enc); } catch (e) { /* unknown label - guess below */ } }
+    // No usable .cpg. Most current exports are UTF-8; older ones are
+    // Windows-1252, which strict UTF-8 decoding will reject.
+    try { new TextDecoder('utf-8', { fatal:true }).decode(bytes); return new TextDecoder('utf-8'); }
+    catch (e) { return new TextDecoder('windows-1252'); }
+  }
+  function dbfValue(type, raw) {
+    if (raw === '') return '';
+    if (type === 'N' || type === 'F') { var n = parseFloat(raw); return isFinite(n) ? n : raw; }
+    if (type === 'D' && /^\d{8}$/.test(raw)) return raw.slice(6, 8) + '/' + raw.slice(4, 6) + '/' + raw.slice(0, 4);
+    if (type === 'L') return /^[TtYy]$/.test(raw) ? 'Yes' : /^[FfNn]$/.test(raw) ? 'No' : '';
+    return raw;
+  }
+  function readDbf(buf, cpg) {
+    var dv = new DataView(buf), u8 = new Uint8Array(buf);
+    if (buf.byteLength < 32) throw new Error('That .dbf file is empty or damaged.');
+    var count = dv.getUint32(4, true), headLen = dv.getUint16(8, true), recLen = dv.getUint16(10, true);
+    var dec = makeDecoder(encodingFromCpg(cpg), u8.subarray(headLen));
+    var fields = [], pos = 32;
+    while (pos + 32 <= headLen && u8[pos] !== 0x0D) {
+      var nb = u8.subarray(pos, pos + 11), z = nb.indexOf(0);
+      fields.push({ name: dec.decode(nb.subarray(0, z === -1 ? 11 : z)).trim(),
+                    type: String.fromCharCode(u8[pos + 11]), len: u8[pos + 16] });
+      pos += 32;
+    }
+    var rows = [];
+    for (var r = 0; r < count; r++) {
+      var off = headLen + r * recLen;
+      if (off + recLen > u8.length) break;
+      if (u8[off] === 0x2A) { rows.push(null); continue; }   // deleted - keep the slot so rows still line up with points
+      var p = off + 1, row = {};
+      for (var f = 0; f < fields.length; f++) {
+        row[fields[f].name] = dbfValue(fields[f].type, dec.decode(u8.subarray(p, p + fields[f].len)).trim());
+        p += fields[f].len;
+      }
+      rows.push(row);
+    }
+    return { fields: fields.map(function (f) { return f.name; }), rows: rows };
+  }
+
+  /* ---------- .prj ----------
+     Only the two systems these exports actually use. Anything else is
+     refused with a reason rather than plotted in the wrong place. */
+  function projectionOf(prj, geoms) {
+    var t = String(prj || '').trim();
+    if (t) {
+      if (/^PROJ(CS|CRS)\[/i.test(t) && /British_National_Grid|OSGB.?1936|OSGB36|27700/i.test(t)) return 'bng';
+      if (/^GEOG(CS|CRS)\[/i.test(t) && /WGS.?84|WGS_1984|ETRS.?89|ETRF/i.test(t)) return 'wgs84';
+      var name = (t.match(/^\w+\["([^"]+)"/) || [])[1] || 'unknown';
+      throw new Error('This layer uses a projection the map cannot convert (' + name +
+                      '). Export it in British National Grid or WGS84.');
+    }
+    // No .prj: work it out from the numbers, which do not overlap.
+    var pts = geoms.filter(function (g) { return g && (g.x || g.y); });
+    if (!pts.length) return 'bng';
+    if (pts.every(function (g) { return g.x > -9 && g.x < 3 && g.y > 49 && g.y < 61.5; })) return 'wgs84';
+    if (pts.every(function (g) { return g.x >= 0 && g.x <= 700000 && g.y >= 0 && g.y <= 1300000; })) return 'bng';
+    throw new Error('There is no .prj file, and the coordinates are not British National Grid or ' +
+                    'latitude/longitude. Pick the .prj file as well.');
+  }
+
+  /* ---------- Gathering the files ----------
+     Every part is wrapped as { name, buf(), text() } whether it came from the
+     picker or out of a zip, so the reader does not care which. */
+  function extOf(name) { var m = /\.([^.\/]+)$/.exec(name); return m ? m[1].toLowerCase() : ''; }
+  function stemOf(name) { return String(name).split('/').pop().replace(/\.[^.]+$/, ''); }
+  function filePart(f) {
+    return { name: f.name, buf: function () { return f.arrayBuffer(); }, text: function () { return f.text(); } };
+  }
+  function loadJsZip() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = JSZIP_URL;
+      s.onload = function () { window.JSZip ? resolve(window.JSZip) : reject(new Error('Zip reader failed to start')); };
+      s.onerror = function () {
+        reject(new Error('Could not load the zip reader - check the signal, or pick the .shp, .dbf and .prj files instead.'));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  function zipParts(file) {
+    return loadJsZip().then(function (JSZip) {
+      return file.arrayBuffer().then(function (buf) { return JSZip.loadAsync(buf); });
+    }).then(function (zip) {
+      var parts = [];
+      zip.forEach(function (path, entry) {
+        if (entry.dir || /(^|\/)__MACOSX\//.test(path) || /(^|\/)\._/.test(path)) return;
+        parts.push({ name: path,
+                     buf: function () { return entry.async('arraybuffer'); },
+                     text: function () { return entry.async('string'); } });
+      });
+      return parts;
+    });
+  }
+  /* Groups parts into layers by file name. If only one .shp was picked, the
+     names do not have to match - phones and mail gateways sometimes rename
+     downloads - so every part goes with it by extension alone. */
+  function groupParts(parts) {
+    var shps = parts.filter(function (p) { return extOf(p.name) === 'shp'; });
+    if (!shps.length) throw new Error('No .shp file picked. Choose the .shp, .dbf and .prj together, or a .zip of them.');
+    var groups = shps.map(function (s) { return { stem: stemOf(s.name), shp: s }; });
+    parts.forEach(function (p) {
+      var ext = extOf(p.name);
+      if (['dbf', 'prj', 'cpg'].indexOf(ext) === -1) return;
+      var g = groups.length === 1 ? groups[0]
+            : groups.filter(function (x) { return x.stem.toLowerCase() === stemOf(p.name).toLowerCase(); })[0];
+      if (g && !g[ext]) g[ext] = p;
+    });
+    return groups;
+  }
+
+  function buildLayer(g) {
+    return Promise.all([
+      g.shp.buf(),
+      g.dbf ? g.dbf.buf() : null,
+      g.prj ? g.prj.text() : '',
+      g.cpg ? g.cpg.text() : ''
+    ]).then(function (r) {
+      var geoms = readShp(r[0]);
+      var table = r[1] ? readDbf(r[1], r[3]) : { fields: [], rows: [] };
+      var proj = projectionOf(r[2], geoms);
+      var profile = matchProfile(table.fields);
+      var pts = [], skipped = 0;
+
+      geoms.forEach(function (geo, i) {
+        var row = table.rows.length ? table.rows[i] : {};
+        if (row === null) return;                         // deleted in the .dbf
+        // (0,0) is how several tools write "no location" for a point.
+        if (!geo || !isFinite(geo.x) || !isFinite(geo.y) || (geo.x === 0 && geo.y === 0)) { skipped++; return; }
+        var ll = proj === 'bng' ? bngToLatLng(geo.x, geo.y) : { lat: geo.y, lng: geo.x };
+        // Outside GB and Ireland means a bad point, not a real one - leave it off.
+        if (!(ll.lat > 49 && ll.lat < 61.5 && ll.lng > -11 && ll.lng < 2.5)) { skipped++; return; }
+        var props = {};
+        Object.keys(row || {}).forEach(function (k) { if (row[k] !== '' && row[k] != null) props[k] = row[k]; });
+        pts.push({ lat: Math.round(ll.lat * 1e6) / 1e6, lng: Math.round(ll.lng * 1e6) / 1e6, p: props });
+      });
+
+      if (!pts.length) throw new Error('None of the ' + geoms.length + ' points in ' + g.stem + ' has a usable location.');
+      return {
+        name: g.stem.replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || 'Map layer',
+        file: g.shp.name.split('/').pop(),
+        loadedAt: new Date().toISOString(),
+        visible: true,
+        profile: profile ? profile.key : null,
+        skipped: skipped,
+        noDbf: !g.dbf,
+        pts: pts
+      };
+    });
+  }
+
+  function readLayerFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList);
+    var zips = files.filter(function (f) { return extOf(f.name) === 'zip'; });
+    var loose = files.filter(function (f) { return extOf(f.name) !== 'zip'; }).map(filePart);
+    return Promise.all(zips.map(zipParts)).then(function (fromZips) {
+      var parts = loose;
+      fromZips.forEach(function (z) { parts = parts.concat(z); });
+      return Promise.all(groupParts(parts).map(buildLayer));
+    });
+  }
+
+  /* ---------- Drawing ---------- */
+  function pointStyle(layer, pt) {
+    var prof = profileByKey(layer.profile);
+    if (!prof || !prof.colourBy) return { colour: LAYER_DEFAULT_COLOUR, rank: 99 };
+    var v = String(pt.p[prof.colourBy] || '').trim().toLowerCase();
+    for (var i = 0; i < prof.colours.length; i++) {
+      if (prof.colours[i].value === v) return { colour: prof.colours[i].colour, rank: i };
+    }
+    return { colour: URG.none, rank: 98 };
+  }
+  function pointTitle(layer, pt) {
+    var prof = profileByKey(layer.profile);
+    if (prof && pt.p[prof.title] != null) return String(pt.p[prof.title]);
+    var keys = Object.keys(pt.p);
+    for (var i = 0; i < keys.length; i++) {
+      if (/^(name|asset_?id|asset_?no|id|ref|reference)$/i.test(keys[i])) return String(pt.p[keys[i]]);
+    }
+    return layer.name;
+  }
+  function layerPopupHtml(layer, pt) {
+    var prof = profileByKey(layer.profile);
+    var st = pointStyle(layer, pt);
+    var title = pointTitle(layer, pt);
+    var sub = prof ? pt.p[prof.subtitle] : '';
+    var rows = prof
+      ? prof.rows.filter(function (r) { return pt.p[r[1]] != null; }).map(function (r) { return [r[0], pt.p[r[1]]]; })
+      : Object.keys(pt.p).map(function (k) { return [k, pt.p[k]]; });
+    var url = navUrl({ lat: pt.lat, lng: pt.lng, ref: title });
+
+    return '<div class="pp">' +
+      '<div class="pp-head" style="border-color:' + st.colour + '">' + esc(title) + '</div>' +
+      (sub ? '<div class="pp-addr">' + esc(sub) + '</div>' : '') +
+      '<div class="pp-tags">' + esc(layer.name) + '</div>' +
+      (rows.length
+        ? '<table class="pp-table">' + rows.map(function (r) {
+            return '<tr><th>' + esc(r[0]) + '</th><td>' + esc(r[1]) + '</td></tr>';
+          }).join('') + '</table>'
+        : '') +
+      '<div class="pp-coords">' + pt.lat.toFixed(6) + ', ' + pt.lng.toFixed(6) + '</div>' +
+      '<div class="pp-btns">' +
+        '<button class="pp-copy" onclick="copyCoords(' + pt.lat + ',' + pt.lng + ')">Copy coords</button>' +
+        '<a class="pp-nav" href="' + esc(url) + '"' + navTarget(url) + '>Open in Maps</a>' +
+      '</div></div>';
+  }
+  function layerIcon(colour) {
+    return L.divIcon({
+      html: '<div class="lyr-marker" style="background:' + colour + '"></div>',
+      className: '', iconSize: [28, 28], iconAnchor: [14, 14]
+    });
+  }
+
+  // Rebuilt only when a layer is loaded, shown, hidden or removed - NOT from
+  // render(), which runs on every keystroke in the search box.
+  function syncLayers() {
+    if (!layerCluster) return;
+    layerCluster.clearLayers();
+    var live = [];
+    layers.forEach(function (layer) {
+      if (!layer.visible) return;
+      layer.pts.forEach(function (pt) {
+        var st = pointStyle(layer, pt);
+        var m = L.marker([pt.lat, pt.lng], { icon: layerIcon(st.colour), colour: st.colour, rank: st.rank });
+        // A function, so the popup HTML is only built for the one that is opened.
+        m.bindPopup(function () { return layerPopupHtml(layer, pt); },
+                    { maxWidth: 320, keepInView: true, autoPan: true, autoPanPadding: [16, 16], maxHeight: 400 });
+        live.push(m);
+      });
+    });
+    layerCluster.addLayers(live);
+    renderLayerLegend();
+  }
+
+  function renderLayerLegend() {
+    var el = document.getElementById('layerLegend');
+    if (!el) return;
+    var html = '';
+    layers.forEach(function (layer) {
+      if (!layer.visible) return;
+      var prof = profileByKey(layer.profile);
+      if (prof && prof.colours) {
+        prof.colours.forEach(function (c) {
+          html += '<span><i class="dia" style="background:' + c.colour + '"></i>' + esc(c.label) + '</span>';
+        });
+      } else {
+        html += '<span><i class="dia" style="background:' + LAYER_DEFAULT_COLOUR + '"></i>' + esc(layer.name) + '</span>';
+      }
+    });
+    el.innerHTML = html;
+  }
+
+  function visibleLayerPoints() {
+    var pts = [];
+    layers.forEach(function (l) { if (l.visible) l.pts.forEach(function (p) { pts.push([p.lat, p.lng]); }); });
+    return pts;
+  }
+  function fitToLayer(layer) {
+    var pts = layer.pts.map(function (p) { return [p.lat, p.lng]; });
+    if (pts.length) fitPoints(pts, function () { fitToLayer(layer); });
+  }
+
+  /* ---------- Settings list ---------- */
+  function renderLayerList() {
+    var el = document.getElementById('layerList');
+    if (!el) return;
+    if (!layers.length) { el.innerHTML = ''; return; }
+    el.innerHTML = layers.map(function (l, i) {
+      var prof = profileByKey(l.profile);
+      var when = l.loadedAt
+        ? new Date(l.loadedAt).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+        : '';
+      var sub = l.pts.length + ' ' + (prof ? prof.noun : 'points') + ' on the map' +
+        (l.skipped ? ', ' + l.skipped + ' with no location' : '') +
+        (when ? ' &middot; loaded ' + when : '') +
+        (l.noDbf ? ' &middot; no .dbf, so no details' : '');
+      return '<div class="lyr-row">' +
+        '<label class="set-toggle"><input type="checkbox" data-layer="' + i + '"' + (l.visible ? ' checked' : '') + ' />' +
+          '<span class="track"></span><span class="lbl">' + esc(l.name) + '<span class="sub">' + sub + '</span></span></label>' +
+        '<button class="button danger" data-remove="' + i + '">Remove</button>' +
+      '</div>';
+    }).join('');
+
+    Array.prototype.forEach.call(el.querySelectorAll('input[data-layer]'), function (box) {
+      box.onchange = function () {
+        var l = layers[+box.getAttribute('data-layer')];
+        l.visible = box.checked;
+        syncLayers(); saveLayers();
+      };
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('button[data-remove]'), function (btn) {
+      btn.onclick = function () {
+        var l = layers.splice(+btn.getAttribute('data-remove'), 1)[0];
+        syncLayers(); saveLayers(); renderLayerList();
+        toast('Removed ' + l.name);
+      };
+    });
+  }
+
+  /* ---------- Saving ----------
+     Its own key, so a layer that is too big for the phone's storage can never
+     take the job export or the "done" marks down with it. */
+  function saveLayers() {
+    try {
+      if (layers.length) localStorage.setItem(LAYER_KEY, JSON.stringify(layers));
+      else localStorage.removeItem(LAYER_KEY);
+      return true;
+    } catch (e) {
+      logError('saveLayers failed: ' + ((e && e.name) ? e.name : e));
+      toast('Layer is shown, but too big to keep on this phone - load it again after a reload');
+      return false;
+    }
+  }
+  function restoreLayers() {
+    try {
+      var raw = localStorage.getItem(LAYER_KEY);
+      var saved = raw ? JSON.parse(raw) : [];
+      layers = Array.isArray(saved) ? saved.filter(function (l) { return l && Array.isArray(l.pts); }) : [];
+    } catch (e) { layers = []; }
+    syncLayers();
+    renderLayerList();
+  }
+
+  function onLayerFiles(fileList) {
+    if (!fileList || !fileList.length) return;
+    toast('Reading map layer...');
+    readLayerFiles(fileList).then(function (loaded) {
+      loaded.forEach(function (nl) {
+        // Same name again = a fresh export of that layer, so replace it.
+        for (var i = 0; i < layers.length; i++) {
+          if (layers[i].name === nl.name) { layers.splice(i, 1); break; }
+        }
+        layers.push(nl);
+      });
+      syncLayers();
+      saveLayers();
+      renderLayerList();
+      var nl = loaded[loaded.length - 1];
+      var prof = profileByKey(nl.profile);
+      fitToLayer(nl);
+      showTab('mapPane');
+      toast('Loaded ' + nl.pts.length + ' ' + (prof ? prof.noun : 'points') +
+            (nl.skipped ? ' (' + nl.skipped + ' with no location left off)' : ''));
+    })['catch'](function (err) {
+      console.error(err);
+      logError('layer load: ' + (err && err.message ? err.message : err));
+      toast((err && err.message) || 'Could not read that shapefile');
+    });
+  }
 
   /* ---------- Live location ---------- */
   function meIcon(heading) {
@@ -1558,8 +2143,8 @@
      the phone. No job data and no addresses - just shape and state. */
   function storageBytes() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? raw.length : 0;
+      var raw = localStorage.getItem(STORAGE_KEY), lyr = localStorage.getItem(LAYER_KEY);
+      return (raw ? raw.length : 0) + (lyr ? lyr.length : 0);
     } catch (e) { return -1; }
   }
   function diagnosticsText() {
@@ -1577,6 +2162,12 @@
     L.push('Filters:   gang=' + state.gang + ' date=' + state.date +
            ' show=' + state.completion + ' sort=' + state.sort +
            (state.search ? ' search="' + state.search + '"' : ''));
+    L.push('Layers:    ' + (layers.length
+      ? layers.map(function (l) {
+          return '"' + l.name + '" ' + l.pts.length + ' pts' + (l.skipped ? ' +' + l.skipped + ' no loc' : '') +
+                 (l.visible ? '' : ' (hidden)');
+        }).join('; ')
+      : 'none'));
     L.push('Display:   theme=' + state.theme + ' units=' + state.units +
            ' keepAwake=' + state.keepAwake + (WAKE_SUPPORTED ? '' : ' (unsupported)'));
     L.push('');
@@ -1617,6 +2208,7 @@
         '<div style="font-size:13px;line-height:1.5;margin-bottom:14px">This removes ' +
           (jobs.length ? '<b>' + jobs.length + ' jobs</b>' : 'the loaded export') + ', <b>' +
           completedSet.size + '</b> "done" mark' + (completedSet.size === 1 ? '' : 's') +
+          (layers.length ? ', <b>' + layers.length + '</b> map layer' + (layers.length === 1 ? '' : 's') : '') +
           ' and your saved settings from this device. It cannot be undone. Nothing in ' +
           'Causeway changes, and you can load the export again afterwards.</div>' +
         '<div style="display:flex;gap:8px">' +
@@ -1632,6 +2224,7 @@
       try {
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(THEME_KEY);
+        localStorage.removeItem(LAYER_KEY);
       } catch (e) { logError('clear failed: ' + ((e && e.name) ? e.name : e)); }
       jobs = []; filteredJobs = []; completedSet = new Set();
       fileLabel = ''; loadedAt = null; selectedJobId = null;
@@ -1689,7 +2282,7 @@
         map.invalidateSize();
         // Carry out any fit that was requested while this pane was hidden, now
         // that Leaflet has a real container size to measure.
-        if (pendingFit) fitToFilter();
+        if (pendingFit) { var f = pendingFit; pendingFit = null; f(); }
       }, 120);
     }
     saveState();
@@ -1742,6 +2335,11 @@
         toast(err.message || 'Could not read that file');
       });
       e.target.value = '';   // let the same filename be re-picked after a re-export
+    });
+
+    document.getElementById('layerInput').addEventListener('change', function (e) {
+      onLayerFiles(e.target.files);
+      e.target.value = '';   // allow the same files to be picked again after a re-export
     });
 
     document.getElementById('searchInput').addEventListener('input', function (e) {
@@ -1832,6 +2430,7 @@
     } else {
       applyStateToControls();
     }
+    restoreLayers();
     applyTheme();
     applyWakeLock();
     requestPersistence();
