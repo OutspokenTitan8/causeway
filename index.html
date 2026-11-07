@@ -348,10 +348,27 @@
     .lyr-cluster b { position:relative; font-size:13px; font-weight:800; line-height:1; }
     .legend i.dia { border-radius:2px; transform:rotate(45deg); width:10px; height:10px; }
     #layerLegend { display:contents; }
-    .lyr-row { display:flex; align-items:center; gap:10px; }
-    .lyr-row .set-toggle { flex:1; min-width:0; }
-    .lyr-row .lbl { min-width:0; overflow-wrap:anywhere; }
-    .lyr-row .button { flex:none; min-width:0; }
+    /* Filled / done: grey with a cross, the same as a done job. The parent is
+       already turned 45deg, so 0deg and 90deg bars read as an X on screen. */
+    .lyr-marker.filled { background:#8b98a9 !important; position:relative; }
+    .lyr-marker.filled::before, .lyr-marker.filled::after { content:''; position:absolute; left:50%; top:50%; width:10px; height:2px; background:#fff; transform:translate(-50%,-50%); }
+    .lyr-marker.filled::after { transform:translate(-50%,-50%) rotate(90deg); }
+    .lyr-card { display:grid; gap:9px; padding-top:10px; border-top:1px solid var(--line); }
+    .lyr-card:first-child { padding-top:0; border-top:none; }
+    .lyr-card .set-toggle { min-width:0; }
+    .lyr-card .lbl { min-width:0; overflow-wrap:anywhere; }
+    .lyr-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .lyr-chips > span { font-size:12px; color:var(--mut); margin-right:2px; }
+    .lyr-chip { display:inline-flex; align-items:center; gap:7px; min-height:40px; padding:0 12px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--mut); font-family:inherit; font-size:12px; font-weight:600; cursor:pointer; text-decoration:line-through; }
+    .lyr-chip i { width:9px; height:9px; transform:rotate(45deg); border-radius:2px; opacity:.35; flex:none; }
+    .lyr-chip[aria-pressed="true"] { color:var(--txt); border-color:var(--accent); text-decoration:none; }
+    .lyr-chip[aria-pressed="true"] i { opacity:1; }
+    .lyr-chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .lyr-actions { display:flex; flex-wrap:wrap; gap:8px; }
+    .lyr-actions .button { flex:1; min-width:96px; }
+    .lyr-actions .button:disabled { opacity:.4; cursor:default; }
+    .pp-fill { width:100%; border:none; border-radius:8px; min-height:44px; margin-bottom:6px; font-family:inherit; font-size:13px; font-weight:700; color:#fff; background:#c2410c; cursor:pointer; }
+    .pp-fill.on { background:#6b7785; }
     .pp-table { font-size:12px; color:#222; border-collapse:collapse; width:100%; margin-bottom:8px; }
     .pp-table th { text-align:left; color:#666; font-weight:600; padding:3px 8px 3px 0; vertical-align:top; white-space:nowrap; }
     .pp-table td { padding:3px 0; overflow-wrap:anywhere; }
@@ -499,7 +516,9 @@
               <b>.shp</b>, <b>.dbf</b> and <b>.prj</b> files together (press and
               hold to select more than one), or a single <b>.zip</b> holding them.
               Layers show on the map only, not in the job list. They are read on
-              this phone and nothing is uploaded.
+              this phone and nothing is uploaded. Tap a grit bin and use
+              <b>Mark filled</b> as you go; <b>Export filled</b> saves a
+              spreadsheet of what was done, with times.
             </div>
           </div>
 
@@ -560,6 +579,20 @@
      ========================================================= */
 
   /* ---------- Changelog ----------
+     v2.10.0 Map layers: filled marks, fill-level filter, export of filled bins.
+             - "Mark filled" button in a grit bin's popup ("Mark done" on other
+               layers). The bin turns grey with a cross. Tap again to undo.
+               Kept on this phone only, like job "done" marks.
+             - Each mark keeps a copy of the bin's details, so a fresh export of
+               the layer (same name) keeps the marks, and an export of filled
+               bins still works after the bin has dropped out of the layer.
+             - Clusters count bins still to fill, and show a tick when all done.
+             - Settings > Map layers: chips to show or hide each fill level and
+               filled bins. Legend and Fit follow what is shown.
+             - "Export filled" saves an Excel file of every filled bin with the
+               date and time it was marked and the phone's gang code filter.
+               "Clear filled" removes the marks, after a confirmation.
+             - Clear all data removes filled marks too.
      v2.9.0  Map layers: shapefiles can be loaded as an extra layer on the map,
              first use being the "Grit Bins Requiring Filling" export.
              - Settings > Map layers > Load shapefile. Takes the .shp + .dbf + .prj
@@ -607,7 +640,7 @@
      ------------------------------------------------------------------
      STORAGE_KEY is deliberately NOT bumped with the version: it keys the saved
      export and the "done" marks, and changing it would wipe both on upgrade. */
-  var VERSION = 'v2.9.0';
+  var VERSION = 'v2.10.0';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -1033,10 +1066,14 @@
       iconCreateFunction: function (cluster) {
         var kids = cluster.getAllChildMarkers();
         // Same rule as jobs: the group takes the colour of its most urgent point.
-        var best = null;
-        kids.forEach(function (m) { if (!best || m.options.rank < best.options.rank) best = m; });
+        var best = null, left = 0;
+        kids.forEach(function (m) {
+          if (!best || m.options.rank < best.options.rank) best = m;
+          if (!m.options.filled) left++;
+        });
+        // The number is what is still to fill here; a tick once all are done.
         return L.divIcon({
-          html: '<div class="lyr-cluster" style="--c:' + best.options.colour + '"><b>' + kids.length + '</b></div>',
+          html: '<div class="lyr-cluster" style="--c:' + best.options.colour + '"><b>' + (left || '&#10003;') + '</b></div>',
           className: '', iconSize: [44,44], iconAnchor: [22,22]
         });
       }
@@ -1267,6 +1304,10 @@
     key: 'gritbins',
     match: ['asset_id', 'Grit Bin_1'],
     noun: 'grit bins',
+    doneLabel: 'Filled',
+    // Identifies a bin across fresh exports, so filled marks carry over. Bins
+    // with no asset ID fall back to their coordinates. See pointKey().
+    idField: 'asset_id',
     title: 'asset_id',
     subtitle: 'site_name',
     colourBy: 'Grit Bin_1',
@@ -1282,10 +1323,25 @@
       ['Condition', 'Grit Bin_3'], ['Condition note', 'Grit Bin_4'],
       ['Type', 'feature__1'], ['Route', 'insp_route'],
       ['Last inspected', 'feature_in'], ['Site code', 'site_code']
+    ],
+    // Columns in "Export filled", after the date/time and gang code. These are
+    // also the details copied into each filled mark.
+    exportCols: [
+      ['Asset ID', 'asset_id'], ['Site name', 'site_name'], ['Route', 'insp_route'],
+      ['Fill level before', 'Grit Bin_1'], ['Condition', 'Grit Bin_3'], ['Site code', 'site_code']
     ]
   }];
 
   var layers = [];
+
+  /* Filled / done marks, kept apart from the layers so loading a fresh export
+     can never wipe them:  { "<layer name>": { "<point key>": mark } }
+     where a mark is { at: ISO time, title, lat, lng, p: {copied details} }. */
+  var FILLED_KEY = 'job-map-layer-filled-v1';
+  var DONE_GREY = '#8b98a9';
+  var filled = {};
+  // Markers currently on the map, by a number the popup buttons can pass back.
+  var layerMarkers = {}, layerMarkerSeq = 0;
 
   function profileByKey(key) {
     for (var i = 0; i < LAYER_PROFILES.length; i++) if (LAYER_PROFILES[i].key === key) return LAYER_PROFILES[i];
@@ -1568,15 +1624,102 @@
     });
   }
 
+  /* ---------- Filled marks ---------- */
+  function doneLabel(layer) {
+    var prof = profileByKey(layer.profile);
+    return (prof && prof.doneLabel) || 'Done';
+  }
+  // Same bin, same key, across fresh exports: the asset ID where the export
+  // has one, otherwise the position (to 6 dp, about 10 cm).
+  function pointKey(layer, pt) {
+    var prof = profileByKey(layer.profile);
+    if (prof && prof.idField && pt.p[prof.idField] != null && String(pt.p[prof.idField]).trim()) {
+      return 'id:' + String(pt.p[prof.idField]).trim();
+    }
+    return 'll:' + pt.lat.toFixed(6) + ',' + pt.lng.toFixed(6);
+  }
+  function markOf(layer, pt) {
+    var m = filled[layer.name];
+    return (m && m[pointKey(layer, pt)]) || null;
+  }
+  function filledCount(layer) {
+    return filled[layer.name] ? Object.keys(filled[layer.name]).length : 0;
+  }
+  function filledTodayCount(layer) {
+    var m = filled[layer.name] || {}, today = ymd(new Date());
+    return Object.keys(m).filter(function (k) { return ymd(new Date(m[k].at)) === today; }).length;
+  }
+  function setFilled(layer, pt, on) {
+    var key = pointKey(layer, pt);
+    if (on) {
+      // Copy the details now, so the export still has them after this bin
+      // drops out of a fresh export of the layer.
+      var prof = profileByKey(layer.profile), keep = {};
+      var fields = (prof && prof.exportCols) ? prof.exportCols.map(function (c) { return c[1]; }) : Object.keys(pt.p);
+      fields.forEach(function (f) { if (pt.p[f] != null) keep[f] = pt.p[f]; });
+      if (!filled[layer.name]) filled[layer.name] = {};
+      filled[layer.name][key] = { at: new Date().toISOString(), title: pointTitle(layer, pt), lat: pt.lat, lng: pt.lng, p: keep };
+    } else if (filled[layer.name]) {
+      delete filled[layer.name][key];
+      if (!Object.keys(filled[layer.name]).length) delete filled[layer.name];
+    }
+  }
+  function saveFilled() {
+    try {
+      if (Object.keys(filled).length) localStorage.setItem(FILLED_KEY, JSON.stringify(filled));
+      else localStorage.removeItem(FILLED_KEY);
+    } catch (e) {
+      logError('saveFilled failed: ' + ((e && e.name) ? e.name : e));
+      toast('Could not save that on this phone - storage is full');
+    }
+  }
+  function restoreFilled() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(FILLED_KEY) || '{}');
+      filled = (saved && typeof saved === 'object' && !Array.isArray(saved)) ? saved : {};
+    } catch (e) { filled = {}; }
+  }
+
+  /* ---------- Categories (what the Settings chips show and hide) ----------
+     A point is in exactly one: "filled" if marked, else its fill level, else
+     "other" (a value the profile does not know). Unprofiled layers have just
+     "todo" and "filled". */
+  function categoryOf(layer, pt) {
+    if (markOf(layer, pt)) return 'filled';
+    var prof = profileByKey(layer.profile);
+    if (!prof || !prof.colourBy) return 'todo';
+    var v = String(pt.p[prof.colourBy] || '').trim().toLowerCase();
+    for (var i = 0; i < prof.colours.length; i++) if (prof.colours[i].value === v) return v;
+    return 'other';
+  }
+  function categoriesOf(layer) {
+    var prof = profileByKey(layer.profile), cats = [];
+    if (prof && prof.colours) {
+      prof.colours.forEach(function (c) { cats.push({ key: c.value, label: c.label, colour: c.colour }); });
+      if (layer.pts.some(function (p) { return categoryOf(layer, p) === 'other'; })) {
+        cats.push({ key: 'other', label: 'Other', colour: URG.none });
+      }
+    } else {
+      cats.push({ key: 'todo', label: 'Not ' + doneLabel(layer).toLowerCase(), colour: LAYER_DEFAULT_COLOUR });
+    }
+    cats.push({ key: 'filled', label: doneLabel(layer), colour: DONE_GREY });
+    return cats;
+  }
+  function isShown(layer, pt) {
+    return !layer.hidden || layer.hidden.indexOf(categoryOf(layer, pt)) === -1;
+  }
+
   /* ---------- Drawing ---------- */
   function pointStyle(layer, pt) {
+    var cat = categoryOf(layer, pt);
+    if (cat === 'filled') return { colour: DONE_GREY, rank: 200, filled: true };
+    if (cat === 'todo')   return { colour: LAYER_DEFAULT_COLOUR, rank: 99, filled: false };
+    if (cat === 'other')  return { colour: URG.none, rank: 98, filled: false };
     var prof = profileByKey(layer.profile);
-    if (!prof || !prof.colourBy) return { colour: LAYER_DEFAULT_COLOUR, rank: 99 };
-    var v = String(pt.p[prof.colourBy] || '').trim().toLowerCase();
     for (var i = 0; i < prof.colours.length; i++) {
-      if (prof.colours[i].value === v) return { colour: prof.colours[i].colour, rank: i };
+      if (prof.colours[i].value === cat) return { colour: prof.colours[i].colour, rank: i, filled: false };
     }
-    return { colour: URG.none, rank: 98 };
+    return { colour: URG.none, rank: 98, filled: false };
   }
   function pointTitle(layer, pt) {
     var prof = profileByKey(layer.profile);
@@ -1587,7 +1730,7 @@
     }
     return layer.name;
   }
-  function layerPopupHtml(layer, pt) {
+  function layerPopupHtml(layer, pt, uid) {
     var prof = profileByKey(layer.profile);
     var st = pointStyle(layer, pt);
     var title = pointTitle(layer, pt);
@@ -1596,6 +1739,12 @@
       ? prof.rows.filter(function (r) { return pt.p[r[1]] != null; }).map(function (r) { return [r[0], pt.p[r[1]]]; })
       : Object.keys(pt.p).map(function (k) { return [k, pt.p[k]]; });
     var url = navUrl({ lat: pt.lat, lng: pt.lng, ref: title });
+    var mark = markOf(layer, pt), word = doneLabel(layer);
+    var fillBtn = mark
+      ? '<button class="pp-fill on" onclick="toggleLayerFilled(' + uid + ')">' + esc(word) + ' ' +
+          new Date(mark.at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) +
+          ' &middot; Undo</button>'
+      : '<button class="pp-fill" onclick="toggleLayerFilled(' + uid + ')">Mark ' + esc(word.toLowerCase()) + '</button>';
 
     return '<div class="pp">' +
       '<div class="pp-head" style="border-color:' + st.colour + '">' + esc(title) + '</div>' +
@@ -1607,38 +1756,78 @@
           }).join('') + '</table>'
         : '') +
       '<div class="pp-coords">' + pt.lat.toFixed(6) + ', ' + pt.lng.toFixed(6) + '</div>' +
+      fillBtn +
       '<div class="pp-btns">' +
         '<button class="pp-copy" onclick="copyCoords(' + pt.lat + ',' + pt.lng + ')">Copy coords</button>' +
         '<a class="pp-nav" href="' + esc(url) + '"' + navTarget(url) + '>Open in Maps</a>' +
       '</div></div>';
   }
-  function layerIcon(colour) {
+  function layerIcon(st) {
     return L.divIcon({
-      html: '<div class="lyr-marker" style="background:' + colour + '"></div>',
+      html: '<div class="lyr-marker' + (st.filled ? ' filled' : '') + '" style="background:' + st.colour + '"></div>',
       className: '', iconSize: [28, 28], iconAnchor: [14, 14]
     });
   }
 
-  // Rebuilt only when a layer is loaded, shown, hidden or removed - NOT from
-  // render(), which runs on every keystroke in the search box.
+  // Rebuilt only when a layer is loaded, shown, hidden, filtered or removed -
+  // NOT from render(), which runs on every keystroke in the search box.
   function syncLayers() {
     if (!layerCluster) return;
     layerCluster.clearLayers();
+    layerMarkers = {};
     var live = [];
     layers.forEach(function (layer) {
       if (!layer.visible) return;
       layer.pts.forEach(function (pt) {
+        if (!isShown(layer, pt)) return;
         var st = pointStyle(layer, pt);
-        var m = L.marker([pt.lat, pt.lng], { icon: layerIcon(st.colour), colour: st.colour, rank: st.rank });
-        // A function, so the popup HTML is only built for the one that is opened.
-        m.bindPopup(function () { return layerPopupHtml(layer, pt); },
+        var uid = ++layerMarkerSeq;
+        var m = L.marker([pt.lat, pt.lng], { icon: layerIcon(st), colour: st.colour, rank: st.rank, filled: st.filled });
+        // A function, so the popup HTML is only built for the one that is
+        // opened - and rebuilt by popup.update() after "Mark filled".
+        m.bindPopup(function () { return layerPopupHtml(layer, pt, uid); },
                     { maxWidth: 320, keepInView: true, autoPan: true, autoPanPadding: [16, 16], maxHeight: 400 });
+        layerMarkers[uid] = { layer: layer, pt: pt, marker: m };
         live.push(m);
       });
     });
     layerCluster.addLayers(live);
     renderLayerLegend();
   }
+
+  // From the popup button. Repaints the one marker in place so the popup
+  // stays open, unless the new state is one the operative has hidden.
+  function toggleLayerFilled(uid) {
+    var e = layerMarkers[uid];
+    if (!e) return;
+    var on = !markOf(e.layer, e.pt), word = doneLabel(e.layer).toLowerCase();
+    setFilled(e.layer, e.pt, on);
+    saveFilled();
+    renderLayerList();
+    // Repaint after this tap has finished. Rebuilding the popup now detaches
+    // the button mid-click; Leaflet then cannot trace the click back to the
+    // popup, treats it as a tap on the map, and closes the popup.
+    setTimeout(function () { repaintLayerMarker(e, on, word); }, 0);
+  }
+  function repaintLayerMarker(e, on, word) {
+    if (!isShown(e.layer, e.pt)) {
+      map.closePopup();
+      syncLayers();
+      toast(on ? 'Marked ' + word + ' - hidden, as ' + word + ' is switched off in Settings'
+               : 'Mark removed - hidden by the filter in Settings');
+      return;
+    }
+    var st = pointStyle(e.layer, e.pt);
+    e.marker.options.colour = st.colour;
+    e.marker.options.rank = st.rank;
+    e.marker.options.filled = st.filled;
+    e.marker.setIcon(layerIcon(st));
+    layerCluster.refreshClusters(e.marker);
+    var pop = e.marker.getPopup();
+    if (pop && pop.isOpen()) pop.update();
+    toast(on ? 'Marked ' + word + ' (this phone only)' : 'Mark removed');
+  }
+  window.toggleLayerFilled = toggleLayerFilled;
 
   function renderLayerLegend() {
     var el = document.getElementById('layerLegend');
@@ -1647,25 +1836,106 @@
     layers.forEach(function (layer) {
       if (!layer.visible) return;
       var prof = profileByKey(layer.profile);
-      if (prof && prof.colours) {
-        prof.colours.forEach(function (c) {
-          html += '<span><i class="dia" style="background:' + c.colour + '"></i>' + esc(c.label) + '</span>';
-        });
-      } else {
-        html += '<span><i class="dia" style="background:' + LAYER_DEFAULT_COLOUR + '"></i>' + esc(layer.name) + '</span>';
-      }
+      categoriesOf(layer).forEach(function (c) {
+        if (layer.hidden && layer.hidden.indexOf(c.key) !== -1) return;
+        var label = (c.key === 'todo' && !prof) ? layer.name : c.label;
+        html += '<span><i class="dia" style="background:' + c.colour + '"></i>' + esc(label) + '</span>';
+      });
     });
     el.innerHTML = html;
   }
 
   function visibleLayerPoints() {
     var pts = [];
-    layers.forEach(function (l) { if (l.visible) l.pts.forEach(function (p) { pts.push([p.lat, p.lng]); }); });
+    layers.forEach(function (l) {
+      if (l.visible) l.pts.forEach(function (p) { if (isShown(l, p)) pts.push([p.lat, p.lng]); });
+    });
     return pts;
   }
   function fitToLayer(layer) {
     var pts = layer.pts.map(function (p) { return [p.lat, p.lng]; });
     if (pts.length) fitPoints(pts, function () { fitToLayer(layer); });
+  }
+
+  /* ---------- Export filled ----------
+     Built with SheetJS, already loaded for reading the job export. The date
+     is written as an Excel serial from LOCAL parts (same reason as ymd()), so
+     a mark made at 07:30 BST reads 07:30 in Excel, not 06:30. */
+  function excelSerial(d) {
+    return (Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) -
+            Date.UTC(1899, 11, 30)) / 86400000;
+  }
+  function exportFilled(layer) {
+    var marks = filled[layer.name] || {};
+    var list = Object.keys(marks).map(function (k) { return marks[k]; });
+    var word = doneLabel(layer);
+    if (!list.length) { toast('Nothing marked ' + word.toLowerCase() + ' yet'); return; }
+    if (typeof XLSX === 'undefined') { toast('The spreadsheet library did not load - check the signal and reload'); return; }
+    list.sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : 0; });
+
+    var prof = profileByKey(layer.profile), cols;
+    if (prof && prof.exportCols) {
+      cols = prof.exportCols;
+    } else {
+      var seen = {};
+      cols = [];
+      list.forEach(function (m) {
+        Object.keys(m.p || {}).forEach(function (k) { if (!seen[k]) { seen[k] = 1; cols.push([k, k]); } });
+      });
+    }
+    var gang = state.gang !== '__all' ? state.gang : '';
+    var head = [word + ' at', 'Gang code'].concat(cols.map(function (c) { return c[0]; }), ['Latitude', 'Longitude']);
+    // The export spells fill levels two ways ("Half Full" / "Half full"); write
+    // the legend's spelling so the column filters into one value per level.
+    var tidy = function (field, v) {
+      if (!prof || field !== prof.colourBy) return v;
+      var low = String(v).trim().toLowerCase();
+      for (var i = 0; i < prof.colours.length; i++) if (prof.colours[i].value === low) return prof.colours[i].label;
+      return v;
+    };
+    var aoa = [head];
+    list.forEach(function (m) {
+      aoa.push([null, gang].concat(
+        cols.map(function (c) { return (m.p && m.p[c[1]] != null) ? tidy(c[1], m.p[c[1]]) : ''; }),
+        [m.lat, m.lng]));
+    });
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    list.forEach(function (m, i) {
+      ws[XLSX.utils.encode_cell({ r: i + 1, c: 0 })] = { t: 'n', v: excelSerial(new Date(m.at)), z: 'dd/mm/yyyy hh:mm' };
+    });
+    ws['!cols'] = head.map(function (h, i) {
+      var w = h.length;
+      aoa.forEach(function (row, r) { if (r && row[i] != null) w = Math.max(w, String(row[i]).length); });
+      return { wch: Math.min(48, Math.max(i === 0 ? 17 : 8, w + 2)) };
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, word);
+    var fname = layer.name.replace(/[\\\/:*?"<>|]/g, '') + ' - ' + word.toLowerCase() + ' ' + ymd(new Date()) + '.xlsx';
+    try {
+      XLSX.writeFile(wb, fname);
+      toast('Saved ' + list.length + ' ' + word.toLowerCase() + ' to ' + fname);
+    } catch (err) {
+      logError('exportFilled: ' + (err && err.message ? err.message : err));
+      toast('Could not save the spreadsheet');
+    }
+  }
+
+  // Two taps for anything that throws marks away. Same modal as Clear all data.
+  function askConfirm(title, bodyHtml, okLabel, onOk) {
+    var btn = 'flex:1;border:none;border-radius:8px;min-height:44px;font-family:inherit;font-size:13px;' +
+              'font-weight:700;color:#fff;cursor:pointer;';
+    document.getElementById('modalBody').innerHTML =
+      '<div style="color:#111">' +
+        '<div style="font-size:16px;font-weight:700;margin-bottom:8px">' + esc(title) + '</div>' +
+        '<div style="font-size:13px;line-height:1.5;margin-bottom:14px">' + bodyHtml + '</div>' +
+        '<div style="display:flex;gap:8px">' +
+          '<button id="askCancel" style="' + btn + 'background:#6b7785">Cancel</button>' +
+          '<button id="askOk" style="' + btn + 'background:#c6303f">' + esc(okLabel) + '</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById('detailModal').classList.add('open');
+    document.getElementById('askCancel').onclick = closeDetails;
+    document.getElementById('askOk').onclick = function () { closeDetails(); onOk(); };
   }
 
   /* ---------- Settings list ---------- */
@@ -1674,33 +1944,81 @@
     if (!el) return;
     if (!layers.length) { el.innerHTML = ''; return; }
     el.innerHTML = layers.map(function (l, i) {
-      var prof = profileByKey(l.profile);
+      var prof = profileByKey(l.profile), word = doneLabel(l).toLowerCase();
+      var nDone = filledCount(l), nToday = filledTodayCount(l);
       var when = l.loadedAt
         ? new Date(l.loadedAt).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
         : '';
       var sub = l.pts.length + ' ' + (prof ? prof.noun : 'points') + ' on the map' +
         (l.skipped ? ', ' + l.skipped + ' with no location' : '') +
+        ' &middot; ' + nDone + ' ' + word + (nDone ? ' (' + nToday + ' today)' : '') +
         (when ? ' &middot; loaded ' + when : '') +
         (l.noDbf ? ' &middot; no .dbf, so no details' : '');
-      return '<div class="lyr-row">' +
+      var chips = categoriesOf(l).map(function (c) {
+        var on = !l.hidden || l.hidden.indexOf(c.key) === -1;
+        return '<button class="lyr-chip" data-layer="' + i + '" data-cat="' + esc(c.key) + '" aria-pressed="' + on + '">' +
+          '<i style="background:' + c.colour + '"></i>' + esc(c.label) + '</button>';
+      }).join('');
+      return '<div class="lyr-card">' +
         '<label class="set-toggle"><input type="checkbox" data-layer="' + i + '"' + (l.visible ? ' checked' : '') + ' />' +
           '<span class="track"></span><span class="lbl">' + esc(l.name) + '<span class="sub">' + sub + '</span></span></label>' +
-        '<button class="button danger" data-remove="' + i + '">Remove</button>' +
+        '<div class="lyr-chips" role="group" aria-label="Show on map"><span>Show:</span>' + chips + '</div>' +
+        '<div class="lyr-actions">' +
+          '<button class="button" data-export="' + i + '"' + (nDone ? '' : ' disabled') + '>Export ' + word + '</button>' +
+          '<button class="button" data-clearfilled="' + i + '"' + (nDone ? '' : ' disabled') + '>Clear ' + word + '</button>' +
+          '<button class="button danger" data-remove="' + i + '">Remove</button>' +
+        '</div>' +
       '</div>';
     }).join('');
 
-    Array.prototype.forEach.call(el.querySelectorAll('input[data-layer]'), function (box) {
+    function each(sel, fn) { Array.prototype.forEach.call(el.querySelectorAll(sel), fn); }
+    each('input[data-layer]', function (box) {
       box.onchange = function () {
-        var l = layers[+box.getAttribute('data-layer')];
-        l.visible = box.checked;
+        layers[+box.getAttribute('data-layer')].visible = box.checked;
         syncLayers(); saveLayers();
       };
     });
-    Array.prototype.forEach.call(el.querySelectorAll('button[data-remove]'), function (btn) {
+    each('button[data-cat]', function (chip) {
+      chip.onclick = function () {
+        var l = layers[+chip.getAttribute('data-layer')], cat = chip.getAttribute('data-cat');
+        if (!l.hidden) l.hidden = [];
+        var at = l.hidden.indexOf(cat);
+        if (at === -1) l.hidden.push(cat); else l.hidden.splice(at, 1);
+        chip.setAttribute('aria-pressed', String(at !== -1));
+        syncLayers(); saveLayers();
+      };
+    });
+    each('button[data-export]', function (btn) {
+      btn.onclick = function () { exportFilled(layers[+btn.getAttribute('data-export')]); };
+    });
+    each('button[data-clearfilled]', function (btn) {
       btn.onclick = function () {
-        var l = layers.splice(+btn.getAttribute('data-remove'), 1)[0];
-        syncLayers(); saveLayers(); renderLayerList();
-        toast('Removed ' + l.name);
+        var l = layers[+btn.getAttribute('data-clearfilled')], word = doneLabel(l).toLowerCase(), n = filledCount(l);
+        askConfirm('Clear ' + word + ' marks?',
+          'This removes <b>' + n + '</b> ' + word + ' mark' + (n === 1 ? '' : 's') + ' for ' + esc(l.name) +
+          ' from this phone. Export them first if you need a record. It cannot be undone.',
+          'Clear ' + word,
+          function () {
+            delete filled[l.name];
+            saveFilled(); syncLayers(); renderLayerList();
+            toast('Cleared ' + n + ' ' + word + ' mark' + (n === 1 ? '' : 's'));
+          });
+      };
+    });
+    each('button[data-remove]', function (btn) {
+      btn.onclick = function () {
+        var idx = +btn.getAttribute('data-remove'), l = layers[idx], n = filledCount(l);
+        var go = function () {
+          layers.splice(layers.indexOf(l), 1);
+          delete filled[l.name];
+          saveFilled(); syncLayers(); saveLayers(); renderLayerList();
+          toast('Removed ' + l.name);
+        };
+        if (!n) { go(); return; }
+        askConfirm('Remove ' + l.name + '?',
+          'Its <b>' + n + '</b> ' + doneLabel(l).toLowerCase() + ' mark' + (n === 1 ? '' : 's') +
+          ' will go too. Export them first if you need a record.',
+          'Remove', go);
       };
     });
   }
@@ -1725,6 +2043,7 @@
       var saved = raw ? JSON.parse(raw) : [];
       layers = Array.isArray(saved) ? saved.filter(function (l) { return l && Array.isArray(l.pts); }) : [];
     } catch (e) { layers = []; }
+    restoreFilled();
     syncLayers();
     renderLayerList();
   }
@@ -1736,7 +2055,12 @@
       loaded.forEach(function (nl) {
         // Same name again = a fresh export of that layer, so replace it.
         for (var i = 0; i < layers.length; i++) {
-          if (layers[i].name === nl.name) { layers.splice(i, 1); break; }
+          if (layers[i].name === nl.name) {
+            // Filled marks are kept by name already; carry the Show chips over too.
+            if (layers[i].hidden) nl.hidden = layers[i].hidden.slice();
+            layers.splice(i, 1);
+            break;
+          }
         }
         layers.push(nl);
       });
@@ -2165,6 +2489,8 @@
     L.push('Layers:    ' + (layers.length
       ? layers.map(function (l) {
           return '"' + l.name + '" ' + l.pts.length + ' pts' + (l.skipped ? ' +' + l.skipped + ' no loc' : '') +
+                 ' ' + filledCount(l) + ' ' + doneLabel(l).toLowerCase() +
+                 (l.hidden && l.hidden.length ? ' hiding=' + l.hidden.join('|') : '') +
                  (l.visible ? '' : ' (hidden)');
         }).join('; ')
       : 'none'));
@@ -2209,6 +2535,11 @@
           (jobs.length ? '<b>' + jobs.length + ' jobs</b>' : 'the loaded export') + ', <b>' +
           completedSet.size + '</b> "done" mark' + (completedSet.size === 1 ? '' : 's') +
           (layers.length ? ', <b>' + layers.length + '</b> map layer' + (layers.length === 1 ? '' : 's') : '') +
+          (function () {
+            var n = 0;
+            Object.keys(filled).forEach(function (k) { n += Object.keys(filled[k]).length; });
+            return n ? ', <b>' + n + '</b> filled mark' + (n === 1 ? '' : 's') : '';
+          })() +
           ' and your saved settings from this device. It cannot be undone. Nothing in ' +
           'Causeway changes, and you can load the export again afterwards.</div>' +
         '<div style="display:flex;gap:8px">' +
@@ -2225,6 +2556,7 @@
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(THEME_KEY);
         localStorage.removeItem(LAYER_KEY);
+        localStorage.removeItem(FILLED_KEY);
       } catch (e) { logError('clear failed: ' + ((e && e.name) ? e.name : e)); }
       jobs = []; filteredJobs = []; completedSet = new Set();
       fileLabel = ''; loadedAt = null; selectedJobId = null;
