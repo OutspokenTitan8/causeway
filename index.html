@@ -560,6 +560,11 @@
      ========================================================= */
 
   /* ---------- Changelog ----------
+     v2.9.1  "Done" count fixed. It showed every mark ever saved on the phone,
+             including jobs that have since left the export (finished in
+             Causeway), so it only ever went up. It now counts done jobs in the
+             loaded export. Marks for a job not seen in any export for
+             DONE_MARK_DAYS days are dropped, so the saved list stops growing.
      v2.9.0  Map layers: shapefiles can be loaded as an extra layer on the map,
              first use being the "Grit Bins Requiring Filling" export.
              - Settings > Map layers > Load shapefile. Takes the .shp + .dbf + .prj
@@ -607,7 +612,7 @@
      ------------------------------------------------------------------
      STORAGE_KEY is deliberately NOT bumped with the version: it keys the saved
      export and the "done" marks, and changing it would wipe both on upgrade. */
-  var VERSION = 'v2.9.0';
+  var VERSION = 'v2.9.1';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -735,6 +740,13 @@
      cannot grow without bound, and read back by Copy diagnostics. */
   var recentErrors = [];
   var saveWarned = false;
+
+  /* "Done" marks are kept on the phone with the date their job was last in a
+     loaded export. Once a job has been out of every export for this many days
+     it has been finished in Causeway, so its mark is dropped. The gap allows
+     for leave and for loading a narrower export for a few days. */
+  var DONE_MARK_DAYS = 14;
+  var doneSeen = {};   // job id -> 'YYYY-MM-DD' last seen in a loaded export
   function logError(what) {
     try {
       recentErrors.push(new Date().toLocaleTimeString('en-GB') + '  ' + String(what).slice(0, 200));
@@ -940,6 +952,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         jobs: slim,
         completed: Array.from(completedSet),
+        doneSeen: doneSeen,
         state: state,
         fileLabel: fileLabel,
         loadedAt: loadedAt ? loadedAt.toISOString() : null
@@ -967,6 +980,8 @@
         return j;
       });
       completedSet = new Set(saved.completed || []);
+      doneSeen = (saved.doneSeen && typeof saved.doneSeen === 'object') ? saved.doneSeen : {};
+      pruneDoneMarks();
       if (saved.state) Object.keys(saved.state).forEach(function (k) { state[k] = saved.state[k]; });
       // 'duedate' was removed in v2.8.0 as a duplicate of 'urgency'. Phones that
       // saved it would otherwise show an empty Sort by box.
@@ -1940,12 +1955,13 @@
     var overdue = active.filter(function (j) { return j.complete && daysFromToday(j.complete) < 0; }).length;
     var dueToday = active.filter(function (j) { return j.complete && daysFromToday(j.complete) === 0; }).length;
     var noCoords = jobs.filter(function (j) { return j.lat == null; }).length;
+    var doneHere = jobs.length - active.length;   // marks for jobs in THIS export only
 
     document.getElementById('statsPanel').innerHTML =
       '<div class="stat">Showing<b>' + filteredJobs.length + '</b></div>' +
       '<div class="stat">Overdue<b style="color:' + URG.over + '">' + overdue + '</b></div>' +
       '<div class="stat">Due today<b style="color:' + URG.today + '">' + dueToday + '</b></div>' +
-      '<div class="stat">Done<b style="color:' + URG.future + '">' + completedSet.size + '</b></div>' +
+      '<div class="stat">Done<b style="color:' + URG.future + '">' + doneHere + '</b></div>' +
       (noCoords ? '<div class="stat">No coords<b>' + noCoords + '</b></div>' : '');
 
     var pill = document.getElementById('overduePill');
@@ -2073,8 +2089,23 @@
     if (job && panTo) openDetails(job);
   }
 
+  /* Stamps each mark whose job is in the loaded export with today's date, and
+     drops marks whose job has been missing for more than DONE_MARK_DAYS. Marks
+     with no date yet (saved before v2.9.1) start counting from today. */
+  function pruneDoneMarks() {
+    var today = todayYmd();
+    var inExport = {};
+    jobs.forEach(function (j) { inExport[j.id] = true; });
+    Array.from(completedSet).forEach(function (id) {
+      if (inExport[id] || !doneSeen[id]) doneSeen[id] = today;
+      else if (-daysFromToday(dateFromYmd(doneSeen[id])) > DONE_MARK_DAYS) completedSet['delete'](id);
+    });
+    Object.keys(doneSeen).forEach(function (id) { if (!completedSet.has(id)) delete doneSeen[id]; });
+  }
+
   function toggleDone(id) {
-    if (completedSet.has(id)) completedSet['delete'](id); else completedSet.add(id);
+    if (completedSet.has(id)) { completedSet['delete'](id); delete doneSeen[id]; }
+    else { completedSet.add(id); doneSeen[id] = todayYmd(); }
     toast(completedSet.has(id) ? 'Marked done (this phone only)' : 'Restored');
     render();
   }
@@ -2157,7 +2188,8 @@
         (loadedAt ? ', loaded ' + loadedAt.toLocaleString('en-GB') : '')
       : 'none loaded'));
     L.push('Showing:   ' + filteredJobs.length + ' after filters');
-    L.push('Done marks:' + ' ' + completedSet.size);
+    L.push('Done marks:' + ' ' + completedSet.size + ' saved, ' +
+           jobs.filter(function (j) { return completedSet.has(j.id); }).length + ' in this export');
     L.push('No coords: ' + jobs.filter(function (j) { return j.lat == null; }).length);
     L.push('Filters:   gang=' + state.gang + ' date=' + state.date +
            ' show=' + state.completion + ' sort=' + state.sort +
@@ -2226,7 +2258,7 @@
         localStorage.removeItem(THEME_KEY);
         localStorage.removeItem(LAYER_KEY);
       } catch (e) { logError('clear failed: ' + ((e && e.name) ? e.name : e)); }
-      jobs = []; filteredJobs = []; completedSet = new Set();
+      jobs = []; filteredJobs = []; completedSet = new Set(); doneSeen = {};
       fileLabel = ''; loadedAt = null; selectedJobId = null;
       closeDetails();
       // Straight back to a clean boot, so nothing stale is left in memory.
@@ -2324,6 +2356,7 @@
         jobs = parsed;                 // completedSet is intentionally NOT cleared:
         fileLabel = file.name;         // IDs are ref-based, so "done" carries over.
         loadedAt = new Date();
+        pruneDoneMarks();
         rebuildDropdowns();
         applyStateToControls();
         render();
