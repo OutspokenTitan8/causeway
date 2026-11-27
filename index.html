@@ -538,13 +538,16 @@
             </div>
             <div class="set-actions">
               <button class="button" id="diagButton">Copy diagnostics</button>
+              <button class="button danger" id="clearJobsButton">Choose what to clear</button>
               <button class="button danger" id="clearDataButton">Clear all data</button>
             </div>
             <div class="set-note">
               <b>Copy diagnostics</b> puts a short summary on the clipboard - version,
               what is loaded and any errors - to paste into a message when something
-              is wrong. <b>Clear all data</b> wipes this phone's copy of the export,
-              the "done" marks and your settings. Neither one changes Causeway.
+              is wrong. <b>Choose what to clear</b> lets you tick exactly what goes:
+              the job export, the "done" marks, each map layer (such as grit bins),
+              each layer's filled marks, or your settings. Anything not ticked stays.
+              <b>Clear all data</b> wipes all of it at once. None of these change Causeway.
             </div>
           </div>
         </div>
@@ -579,6 +582,18 @@
      ========================================================= */
 
   /* ---------- Changelog ----------
+     v2.11.0 "Choose what to clear" in Settings > This device. Tick boxes for the
+             job export, the "done" marks, each map layer, each layer's filled
+             marks and the saved settings, each cleared on its own. Before this,
+             the only way to drop jobs was Clear all data, which took the grit
+             bins with it.
+             - Clearing the job export resets the gang, date and search filters,
+               since they point at the export being removed.
+             - Filled marks are kept by layer name, so removing a layer but not
+               its marks keeps them for when that layer is loaded again (the
+               layer's own Remove button still takes both).
+             - Settings resets theme, units, keep awake, sort and filters to
+               their defaults.
      v2.10.0 Map layers: filled marks, fill-level filter, export of filled bins.
              - "Mark filled" button in a grit bin's popup ("Mark done" on other
                layers). The bin turns grey with a cross. Tap again to undo.
@@ -645,7 +660,7 @@
      ------------------------------------------------------------------
      STORAGE_KEY is deliberately NOT bumped with the version: it keys the saved
      export and the "done" marks, and changing it would wipe both on upgrade. */
-  var VERSION = 'v2.10.0';
+  var VERSION = 'v2.11.0';
   var STORAGE_KEY = 'job-map-v2';
 
   /* ---------- Basemap ----------
@@ -2598,6 +2613,98 @@
     };
   }
 
+  /* ---------- Choose what to clear ----------
+     Each kind of saved data is its own tick box, so one can go without the
+     others. Jobs and "done" marks live in STORAGE_KEY, layers in LAYER_KEY,
+     filled marks in FILLED_KEY (by layer name), settings in state + THEME_KEY.
+     Filled marks are listed by name from `filled` as well as `layers`, so
+     marks for a layer that is no longer loaded can still be cleared. */
+  var STATE_DEFAULTS = { search:'', gang:'__all', date:'__all', completion:'active', sort:'urgency',
+                         tab:'settingsPane', theme:'auto', units:'metric', keepAwake:false };
+  function askClearChoose() {
+    var items = [];
+    function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+    if (jobs.length) items.push({ key:'jobs', label:'Job export', sub:plural(jobs.length, 'job') });
+    if (completedSet.size) items.push({ key:'done', label:'Job "done" marks', sub:plural(completedSet.size, 'mark') });
+    layers.forEach(function (l) {
+      var prof = profileByKey(l.profile);
+      items.push({ key:'layer', name:l.name, label:'Map layer: ' + l.name, sub:l.pts.length + ' ' + (prof ? prof.noun : 'points') });
+    });
+    var names = layers.map(function (l) { return l.name; });
+    Object.keys(filled).forEach(function (k) { if (names.indexOf(k) === -1) names.push(k); });
+    names.forEach(function (name) {
+      var n = filled[name] ? Object.keys(filled[name]).length : 0;
+      if (!n) return;
+      var l = null;
+      layers.forEach(function (x) { if (x.name === name) l = x; });
+      items.push({ key:'filled', name:name, label:'Layer marks: ' + name,
+                   sub:l ? plural(n, doneLabel(l).toLowerCase() + ' mark') : plural(n, 'mark') + ' (layer not loaded)' });
+    });
+    items.push({ key:'settings', label:'Settings', sub:'Theme, units, keep awake, sort and filters' });
+
+    var btn = 'flex:1;border:none;border-radius:8px;min-height:44px;font-family:inherit;font-size:13px;' +
+              'font-weight:700;color:#fff;cursor:pointer;';
+    document.getElementById('modalBody').innerHTML =
+      '<div style="color:#111">' +
+        '<div style="font-size:16px;font-weight:700;margin-bottom:8px">Choose what to clear</div>' +
+        '<div style="font-size:13px;line-height:1.5;margin-bottom:10px">Tick what to remove from this phone. ' +
+          'Anything not ticked stays. It cannot be undone, and nothing in Causeway changes.</div>' +
+        items.map(function (it, i) {
+          return '<label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;' +
+              'border-top:1px solid #e3e7ec;font-size:14px;cursor:pointer">' +
+            '<input type="checkbox" data-clear="' + i + '" style="width:20px;height:20px;margin:1px 0 0;flex:none">' +
+            '<span><b>' + esc(it.label) + '</b><br><span style="font-size:12px;color:#5b6675">' +
+              esc(it.sub) + '</span></span></label>';
+        }).join('') +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button id="askCancel" style="' + btn + 'background:#6b7785">Cancel</button>' +
+          '<button id="askOk" style="' + btn + 'background:#c6303f" disabled>Clear selected</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById('detailModal').classList.add('open');
+
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('#modalBody input[data-clear]'));
+    var ok = document.getElementById('askOk');
+    function picked() { return boxes.filter(function (b) { return b.checked; }).map(function (b) { return items[+b.getAttribute('data-clear')]; }); }
+    function sync() {
+      var n = picked().length;
+      ok.disabled = !n;
+      ok.style.opacity = n ? '1' : '0.45';
+      ok.textContent = n ? 'Clear ' + n + ' selected' : 'Clear selected';
+    }
+    boxes.forEach(function (b) { b.onchange = sync; });
+    sync();
+    document.getElementById('askCancel').onclick = closeDetails;
+    ok.onclick = function () {
+      var sel = picked();
+      if (!sel.length) return;
+      var touchedLayers = false, touchedFilled = false;
+      sel.forEach(function (it) {
+        if (it.key === 'jobs') {
+          jobs = []; filteredJobs = []; fileLabel = ''; loadedAt = null; selectedJobId = null;
+          state.search = ''; state.gang = '__all'; state.date = '__all';
+        } else if (it.key === 'done') {
+          completedSet = new Set(); doneSeen = {};
+        } else if (it.key === 'layer') {
+          layers = layers.filter(function (l) { return l.name !== it.name; });
+          touchedLayers = true;
+        } else if (it.key === 'filled') {
+          delete filled[it.name];
+          touchedFilled = true;
+        } else if (it.key === 'settings') {
+          Object.keys(STATE_DEFAULTS).forEach(function (k) { state[k] = STATE_DEFAULTS[k]; });
+          try { localStorage.removeItem(THEME_KEY); } catch (e) {}
+        }
+      });
+      if (touchedLayers) saveLayers();
+      if (touchedFilled) saveFilled();
+      saveState();
+      closeDetails();
+      // Same clean boot as Clear all data, so nothing stale is left in memory.
+      location.replace(location.pathname);
+    };
+  }
+
   /* ---------- Stale-data check ---------- */
   function checkStale() {
     var bar = document.getElementById('staleBar');
@@ -2769,6 +2876,7 @@
 
     document.getElementById('updateBar').addEventListener('click', applyUpdate);
     document.getElementById('diagButton').addEventListener('click', copyDiagnostics);
+    document.getElementById('clearJobsButton').addEventListener('click', askClearChoose);
     document.getElementById('clearDataButton').addEventListener('click', askClearAllData);
 
     document.getElementById('modalClose').addEventListener('click', closeDetails);
